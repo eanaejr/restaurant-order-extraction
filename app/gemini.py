@@ -12,15 +12,19 @@ Design notes (the whole story is in the README):
   top_p / top_k there, so we never send them for 3.x (GEMINI_TEMPERATURE
   exists only for legacy 2.5 models).
 - Never trust the model: after parsing we strictly validate the result
-  (quantities >= 1, non-empty ids/texts). One retry per model, then the next
-  free model from the fallback chain (settings.fallback_models) — a
-  "503 high demand" on the newest model is a normal, transient situation.
-  Only after the whole chain fails does the endpoint report 502.
+  (quantities >= 1, non-empty ids/texts). Failures are classified (see
+  _failure_kind): a rejected API key stops immediately (retrying cannot
+  fix it), a 429 rate limit gets a longer pause, anything transient gets
+  one retry per model and then the next free model from the fallback chain
+  (a "503 high demand" on the newest models is a normal, transient
+  situation). Only after the whole chain fails does the endpoint report
+  the failure — 502 transient, 503 with Retry-After when only quota-limited.
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 from google import genai
@@ -34,11 +38,33 @@ logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT_FILE = Path(__file__).resolve().parent / "prompts" / "system_prompt.md"
 
-MAX_ATTEMPTS = 2  # one retry
+MAX_ATTEMPTS = 2  # one retry per model
+RETRY_BACKOFF_S = 0.5  # pause between attempts on the same model
+QUOTA_BACKOFF_S = 2.0  # longer pause while being rate-limited (429)
+QUOTA_RETRY_AFTER_S = 60  # advertised to the caller via the Retry-After header
+
+# HTTP codes from the Gemini API that retrying or switching models cannot fix.
+AUTH_CODES = {401, 403}
 
 
 class GeminiError(RuntimeError):
-    """The model could not be reached or returned an unusable answer."""
+    """The model chain could not produce a valid order (transient failures)."""
+
+    status_code = 502  # bad gateway: the upstream (Gemini) is the problem
+    retry_after_s: int | None = None
+
+
+class GeminiAuthError(GeminiError):
+    """Google rejected our API key — retrying or switching cannot help."""
+
+    status_code = 500  # our configuration is the problem, not an outage
+
+
+class GeminiQuotaError(GeminiError):
+    """Every model in the chain answered 429 — free-tier quota exhausted."""
+
+    status_code = 503  # try again later
+    retry_after_s = QUOTA_RETRY_AFTER_S
 
 
 def load_system_prompt(path: Path = SYSTEM_PROMPT_FILE) -> str:
@@ -114,19 +140,39 @@ def _extract_once(client: genai.Client, model: str, settings: Settings,
     return _validate_result(result)
 
 
+def _failure_kind(exc: Exception) -> str:
+    """Classify a failure to decide what can still help.
+
+    'auth'      — Google rejected the key (401/403): stop immediately,
+                  retrying or switching models cannot fix it.
+    'quota'     — 429 rate limit: pause longer, then retry / next model;
+                  if every model is quota-limited, tell the caller to wait.
+    'transient' — network errors, 5xx, or our own validation rejecting the
+                  model's answer: a retry (same or next model) can fix it.
+    """
+
+    code = getattr(exc, "code", None)
+    if code in AUTH_CODES:
+        return "auth"
+    if code == 429:
+        return "quota"
+    return "transient"
+
+
 def extract_order(order_text: str, menu: Menu, settings: Settings,
                   client: genai.Client | None = None,
                   system_prompt: str | None = None) -> GeminiOrder:
     """Turn a guest utterance into a validated GeminiOrder.
 
-    Raises GeminiError after MAX_ATTEMPTS failed attempts (API error,
-    unparsable answer or invalid content).
+    Raises GeminiAuthError (key rejected), GeminiQuotaError (all models
+    rate-limited) or GeminiError (the whole chain failed) — the endpoint
+    maps them to 500 / 503 / 502 respectively.
     """
 
     system_prompt = system_prompt if system_prompt is not None else load_system_prompt()
     if client is None:
         if not settings.api_key:
-            raise GeminiError(
+            raise GeminiAuthError(
                 "GEMINI_API_KEY is not set. Get a free key at "
                 "https://aistudio.google.com/apikey and export it."
             )
@@ -134,6 +180,7 @@ def extract_order(order_text: str, menu: Menu, settings: Settings,
 
     models = [settings.model, *settings.fallback_models]
     last_error: Exception | None = None
+    quota_only = True  # did every failure say 429?
     for model in models:
         for attempt in range(1, MAX_ATTEMPTS + 1):
             try:
@@ -141,13 +188,30 @@ def extract_order(order_text: str, menu: Menu, settings: Settings,
                 if model != settings.model:
                     logger.info("Order extracted with fallback model %s.", model)
                 return result
-            except Exception as exc:  # noqa: BLE001 — retry, then next model
+            except Exception as exc:  # noqa: BLE001 — classified below
+                kind = _failure_kind(exc)
+                if kind == "auth":
+                    # Retrying or switching models cannot fix a rejected key.
+                    raise GeminiAuthError(
+                        "Gemini rejected the API key — check GEMINI_API_KEY "
+                        "(https://aistudio.google.com/apikey): "
+                        f"{exc}"
+                    ) from exc
+                if kind != "quota":
+                    quota_only = False
                 last_error = exc
                 logger.warning(
-                    "Model %s attempt %d/%d failed: %s",
-                    model, attempt, MAX_ATTEMPTS, exc,
+                    "Model %s attempt %d/%d failed (%s): %s",
+                    model, attempt, MAX_ATTEMPTS, kind, exc,
                 )
+                if attempt < MAX_ATTEMPTS:
+                    time.sleep(QUOTA_BACKOFF_S if kind == "quota" else RETRY_BACKOFF_S)
 
+    if quota_only:
+        raise GeminiQuotaError(
+            f"Free-tier rate limit reached (429) on all models ({', '.join(models)}). "
+            f"Try again in about {QUOTA_RETRY_AFTER_S} seconds."
+        )
     chain = ", ".join(models)
     raise GeminiError(
         f"Gemini could not produce a valid order after {MAX_ATTEMPTS} attempt(s) "

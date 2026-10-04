@@ -76,6 +76,14 @@ class FakeResponse:
         self.text = text
 
 
+class FakeApiError(RuntimeError):
+    """Mimics google.genai.errors.APIError: carries an HTTP status code."""
+
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 def make_fake_client(scripts):
     """Stands in for genai.Client, scripted per model.
 
@@ -119,6 +127,8 @@ def isolated_env(monkeypatch):
     """
 
     monkeypatch.setattr(config_module, "load_dotenv", lambda *args, **kwargs: None)
+    monkeypatch.setattr(gemini, "RETRY_BACKOFF_S", 0)
+    monkeypatch.setattr(gemini, "QUOTA_BACKOFF_S", 0)
     for var in ENV_VARS:
         monkeypatch.delenv(var, raising=False)
     yield
@@ -225,6 +235,31 @@ def test_gemini_failure_answers_502(client, monkeypatch):
     response = client.post("/order", json={"text": "jednu colu"})
     assert response.status_code == 502
     assert "Gemini" in response.json()["detail"]
+
+
+def test_auth_failure_answers_500(client, monkeypatch):
+    """A rejected API key is our configuration problem, not an outage."""
+
+    def _raise(*args, **kwargs):
+        raise gemini.GeminiAuthError("Gemini rejected the API key")
+
+    monkeypatch.setattr(gemini, "extract_order", _raise)
+    response = client.post("/order", json={"text": "jednu colu"})
+    assert response.status_code == 500
+    assert "API key" in response.json()["detail"]
+
+
+def test_quota_failure_answers_503_with_retry_after(client, monkeypatch):
+    """Exhausted free-tier quota: 503 plus a Retry-After hint."""
+
+    def _raise(*args, **kwargs):
+        raise gemini.GeminiQuotaError("Free-tier rate limit reached (429)")
+
+    monkeypatch.setattr(gemini, "extract_order", _raise)
+    response = client.post("/order", json={"text": "jednu colu"})
+    assert response.status_code == 503
+    assert "429" in response.json()["detail"]
+    assert response.headers["Retry-After"] == str(gemini.QUOTA_RETRY_AFTER_S)
 
 
 # ---------------------------------------------------------------------------
@@ -455,9 +490,57 @@ def test_extract_order_reports_whole_chain_in_error():
     assert client.model_calls == {"gemini-3.8-flash": 2, "gemini-3.5-flash-lite": 2}
 
 
+def test_auth_error_stops_immediately():
+    """A rejected key (401/403) must not burn retries or fallback models."""
+
+    settings = make_settings(fallback_models=("gemini-3.5-flash-lite",))
+    client = make_fake_client(
+        {
+            "gemini-3.8-flash": [FakeApiError(403, "API key not valid")],
+            "gemini-3.5-flash-lite": [OK_PIVO],  # must never be reached
+        }
+    )
+    with pytest.raises(gemini.GeminiAuthError) as excinfo:
+        gemini.extract_order("jednu colu", make_menu(), settings, client=client)
+    assert "GEMINI_API_KEY" in str(excinfo.value)
+    assert client.model_calls == {"gemini-3.8-flash": 1}  # no retry, no fallback
+
+
+def test_quota_exhausted_on_all_models():
+    """Every model answering 429 means the free-tier quota is gone: 503."""
+
+    settings = make_settings(fallback_models=("gemini-3.5-flash-lite",))
+    client = make_fake_client(
+        {
+            "gemini-3.8-flash": [FakeApiError(429, "rate limit")],
+            "gemini-3.5-flash-lite": [FakeApiError(429, "rate limit")],
+        }
+    )
+    with pytest.raises(gemini.GeminiQuotaError) as excinfo:
+        gemini.extract_order("jednu colu", make_menu(), settings, client=client)
+    assert excinfo.value.status_code == 503
+    assert excinfo.value.retry_after_s == gemini.QUOTA_RETRY_AFTER_S
+    assert client.model_calls == {"gemini-3.8-flash": 2, "gemini-3.5-flash-lite": 2}
+
+
+def test_quota_on_primary_then_fallback_succeeds():
+    """A 429 burst on the primary model is retried, then the chain continues."""
+
+    settings = make_settings(fallback_models=("gemini-3.5-flash-lite",))
+    client = make_fake_client(
+        {
+            "gemini-3.8-flash": [FakeApiError(429, "rate limit")],
+            "gemini-3.5-flash-lite": [OK_PIVO],
+        }
+    )
+    result = gemini.extract_order("dva piva", make_menu(), settings, client=client)
+    assert [i.model_dump() for i in result.items] == [{"id": "pivo", "quantity": 2}]
+    assert client.model_calls == {"gemini-3.8-flash": 2, "gemini-3.5-flash-lite": 1}
+
+
 def test_extract_order_requires_api_key():
     settings = make_settings(api_key=None)
-    with pytest.raises(gemini.GeminiError) as excinfo:
+    with pytest.raises(gemini.GeminiAuthError) as excinfo:
         gemini.extract_order("jednu colu", make_menu(), settings)
     assert "GEMINI_API_KEY" in str(excinfo.value)
 

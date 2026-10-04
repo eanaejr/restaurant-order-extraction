@@ -109,7 +109,13 @@ def create_app() -> FastAPI:
                 system_prompt=app.state.system_prompt,
             )
         except gemini.GeminiError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+            # 500 key problem / 503 quota-limited (with Retry-After) / 502 transient
+            retry_after = exc.retry_after_s
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail=str(exc),
+                headers={"Retry-After": str(retry_after)} if retry_after else None,
+            ) from exc
 
         return normalize_order(result, menu)
 

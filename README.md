@@ -111,12 +111,25 @@ so it is easy to review exactly what is (and is not) sent to the model.
    prompt; the field descriptions in `app/schemas.py` carry the semantics.
 4. The answer is still validated in Python — never trust the model:
    quantities must be ≥ 1, hallucinated ids are moved to `unavailable`,
-   duplicates are merged. On a model or API failure the call is retried once,
-   then the next free model from the fallback chain is tried (Google's newest
-   models occasionally answer `503 high demand`, which is transient); only
-   after the whole chain fails does the endpoint answer `502` with a clear
-   message. Unknown requests come back in their base form (e.g. "dva
-   hamburgera" → `hamburger`), never replaced by a similar menu item.
+   duplicates are merged. Unknown requests come back in their base form
+   (e.g. "dva hamburgera" → `hamburger`), never replaced by a similar item.
+
+## Failure modes (what happens when things go wrong)
+
+| Failure | Behaviour |
+|---|---|
+| A model is overloaded (Google's newest models occasionally answer `503 high demand`) | short backoff, one retry, then the next free model from the fallback chain — proven live |
+| Free-tier rate limit (`429`) | longer backoff between attempts, fallback chain still tried; if every model answers `429`: `503` with a `Retry-After` header |
+| API key invalid/blocked (`401`/`403`) | no pointless retries or fallbacks — the key is the problem, not the models: `500` with a clear "check GEMINI_API_KEY" message |
+| Model returns malformed or nonsensical JSON | strict validation rejects it (retry + fallback), else `502` with the whole chain named |
+| Blank/whitespace text, missing field | `422` |
+| Utterance is a question or small talk, not an order | empty `items` and `unavailable` — nothing is invented |
+| Gemini (or the network) is fully down | whole chain exhausted → `502`; the calling assistant tells the guest — conversation handling belongs to the caller, this service stays stateless |
+| This service itself is down | the caller gets a connection error and degrades on its own (an order-by-phone assistant should say "technical difficulties", not hang up) |
+
+The failure classification lives in `app/gemini.py: _failure_kind`, the
+retry/fallback policy in `extract_order`; the endpoint maps the three error
+classes to `500` / `503` / `502`.
 
 ## Verifying that it works
 
