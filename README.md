@@ -54,13 +54,18 @@ python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-export GEMINI_API_KEY=...          # free key: https://aistudio.google.com/apikey
+cp .env.example .env               # then open .env and paste your key
 uvicorn app.main:app --reload      # interactive API docs at http://127.0.0.1:8000/docs
 ```
 
 The API key is read only from the `GEMINI_API_KEY` environment variable —
-it is never in the code and never in the repository. Without it the service
-still starts, and `POST /order` answers `500` with a clear message.
+never from the code, never from the repository. For local development, the
+gitignored `.env` file at the project root conveniently populates those
+variables; real environment variables always take precedence over `.env`,
+so exporting `GEMINI_API_KEY` works exactly the same way in production.
+`.env.example` is the committed template that documents the variables
+without containing any secrets. Without a key the service still starts,
+and `POST /order` answers `500` with a clear message.
 
 ## Configuration
 
@@ -70,6 +75,11 @@ still starts, and `POST /order` answers `500` with a clear message.
 | `GEMINI_MODEL` | `gemini-3.8-flash` | Any Gemini model with a free tier, e.g. `gemini-3.5-flash` or `gemini-3.5-flash-lite`. |
 | `GEMINI_THINKING_LEVEL` | `low` | `minimal`/`low`/`medium`/`high`. `minimal` is rejected by `gemini-3.7/3.8-flash`. |
 | `GEMINI_TEMPERATURE` | not set | **Legacy 2.5 models only** (see below). |
+
+Any of these can also live in the gitignored `.env` file at the project root
+for local development; real environment variables always win over `.env`.
+The generation parameters live in one function, `app/gemini.py: build_config`,
+so it is easy to review exactly what is (and is not) sent to the model.
 
 **Why there is no temperature by default:** on Gemini 3.x models the backend
 ignores `temperature`, `top_p` and `top_k` (they are deprecated for that

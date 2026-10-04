@@ -3,6 +3,10 @@
 The Gemini API key is never hardcoded nor committed to the repository — it is
 read from the GEMINI_API_KEY environment variable, as the task requires.
 
+For local development, a `.env` file at the project root (gitignored) can
+conveniently populate those variables; real environment variables always win
+(override=False), so production deployments are unaffected either way.
+
 Why there is no temperature by default: on the current Gemini 3.x models
 (gemini-3.8-flash and siblings) the backend *ignores* temperature / top_p /
 top_k. Determinism is instead controlled via thinking_level + response_schema,
@@ -14,6 +18,13 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# The .env file for local development, at the project root (gitignored).
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ENV_FILE = PROJECT_ROOT / ".env"
 
 # "minimal" is supported by some models (3.5/3.6-flash) but rejected with an
 # API error by gemini-3.7-flash and gemini-3.8-flash, hence the "low" default.
@@ -45,6 +56,12 @@ def load_settings() -> Settings:
     is deliberately NOT an error here: the service still starts, and POST
     /order returns a clear 500 instead (see app/main.py).
     """
+
+    # Local development convenience: populate the environment from a .env
+    # file at the project root if it exists. Real environment variables
+    # always win (override=False).
+    if ENV_FILE.exists():
+        load_dotenv(ENV_FILE, override=False)
 
     model = os.getenv("GEMINI_MODEL", "").strip() or DEFAULT_MODEL
 

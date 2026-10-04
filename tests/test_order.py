@@ -4,6 +4,9 @@ The Gemini boundary (app.gemini.extract_order) is mocked in the endpoint
 tests, so the suite runs without an API key and without network access.
 The Gemini-facing pieces (config building, strict validation, retry) are
 tested directly with a fake client.
+
+Every test gets a deterministic environment via the autouse `isolated_env`
+fixture: no local .env file, no variables leaking in or out of a test.
 """
 
 from __future__ import annotations
@@ -11,8 +14,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from dotenv import load_dotenv as real_load_dotenv
 from fastapi.testclient import TestClient
 
+from app import config as config_module
 from app import gemini
 from app.config import ConfigError, load_settings
 from app.main import create_app, normalize_order
@@ -22,7 +27,7 @@ from app.schemas import GeminiItem, GeminiOrder, GeminiUnavailable
 APP_DIR = Path(__file__).resolve().parent.parent
 MENU_FILE = APP_DIR / "jelovnik.json"
 
-ENV_VARS = ("GEMINI_MODEL", "GEMINI_THINKING_LEVEL", "GEMINI_TEMPERATURE")
+ENV_VARS = ("GEMINI_API_KEY", "GEMINI_MODEL", "GEMINI_THINKING_LEVEL", "GEMINI_TEMPERATURE")
 
 
 # ---------------------------------------------------------------------------
@@ -79,16 +84,25 @@ def make_fake_client(script):
     return _Client()
 
 
-@pytest.fixture()
-def clean_env(monkeypatch):
-    """Removes optional Gemini overrides, keeps tests order-independent."""
+@pytest.fixture(autouse=True)
+def isolated_env(monkeypatch):
+    """Deterministic environment for every test.
 
+    - the developer's local .env file is not loaded,
+    - no Gemini variable leaks in or out of a test.
+
+    Tests that explicitly exercise .env handling re-bind the real
+    load_dotenv and point ENV_FILE at a temporary file.
+    """
+
+    monkeypatch.setattr(config_module, "load_dotenv", lambda *args, **kwargs: None)
     for var in ENV_VARS:
         monkeypatch.delenv(var, raising=False)
+    yield
 
 
 @pytest.fixture()
-def client(monkeypatch, clean_env):
+def client(monkeypatch):
     """A TestClient with a dummy API key.
 
     Entering the client context triggers the lifespan, which re-reads the
@@ -171,8 +185,7 @@ def test_missing_text_field_is_rejected(client):
     assert client.post("/order", json={}).status_code == 422
 
 
-def test_missing_api_key_answers_500(monkeypatch, clean_env):
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+def test_missing_api_key_answers_500(monkeypatch):
     app = create_app()
     with TestClient(app) as test_client:
         response = test_client.post("/order", json={"text": "jednu colu"})
@@ -283,11 +296,41 @@ def test_load_settings_rejects_bad_temperature(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# .env handling (local development convenience)
+# ---------------------------------------------------------------------------
+
+
+def test_dotenv_file_is_loaded_when_present(monkeypatch, tmp_path):
+    """A .env file at the project root populates the environment locally."""
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("GEMINI_THINKING_LEVEL=medium\n", encoding="utf-8")
+    monkeypatch.setattr(config_module, "ENV_FILE", env_file)
+    monkeypatch.setattr(config_module, "load_dotenv", real_load_dotenv)
+
+    settings = load_settings()
+    assert settings.thinking_level == "medium"
+
+
+def test_real_environment_wins_over_dotenv(monkeypatch, tmp_path):
+    """Real environment variables always beat .env (override=False)."""
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("GEMINI_THINKING_LEVEL=high\n", encoding="utf-8")
+    monkeypatch.setattr(config_module, "ENV_FILE", env_file)
+    monkeypatch.setattr(config_module, "load_dotenv", real_load_dotenv)
+    monkeypatch.setenv("GEMINI_THINKING_LEVEL", "low")
+
+    settings = load_settings()
+    assert settings.thinking_level == "low"
+
+
+# ---------------------------------------------------------------------------
 # Gemini call with a fake client (no network)
 # ---------------------------------------------------------------------------
 
 
-def test_extract_order_parses_structured_response(clean_env):
+def test_extract_order_parses_structured_response():
     settings = load_settings()
     client = make_fake_client(
         ['{"items": [{"id": "margarita", "quantity": 2}], "unavailable": []}']
@@ -300,7 +343,7 @@ def test_extract_order_parses_structured_response(clean_env):
     assert client.calls == 1
 
 
-def test_extract_order_retries_once_then_succeeds(clean_env):
+def test_extract_order_retries_once_then_succeeds():
     settings = load_settings()
     client = make_fake_client(
         [
@@ -313,7 +356,7 @@ def test_extract_order_retries_once_then_succeeds(clean_env):
     assert client.calls == 2  # failed once, retried, succeeded
 
 
-def test_extract_order_gives_up_after_two_attempts(clean_env):
+def test_extract_order_gives_up_after_two_attempts():
     settings = load_settings()
     client = make_fake_client([RuntimeError("API down")])
     with pytest.raises(gemini.GeminiError):
@@ -321,7 +364,7 @@ def test_extract_order_gives_up_after_two_attempts(clean_env):
     assert client.calls == 2  # initial try + exactly one retry
 
 
-def test_extract_order_rejects_nonpositive_quantity(clean_env):
+def test_extract_order_rejects_nonpositive_quantity():
     settings = load_settings()
     client = make_fake_client(
         ['{"items": [{"id": "margarita", "quantity": 0}], "unavailable": []}']
@@ -331,7 +374,7 @@ def test_extract_order_rejects_nonpositive_quantity(clean_env):
     assert client.calls == 2  # invalid answer retried once, then gave up
 
 
-def test_extract_order_requires_api_key(clean_env):
+def test_extract_order_requires_api_key():
     settings = load_settings()
     assert settings.api_key is None
     with pytest.raises(gemini.GeminiError) as excinfo:
