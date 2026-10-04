@@ -79,6 +79,8 @@ def create_app() -> FastAPI:
             "fallback_models": list(settings.fallback_models),
             "thinking_level": settings.thinking_level,
             "api_key_set": bool(settings.api_key),
+            **({"simulate_failure": settings.simulate_failure}
+               if settings.simulate_failure else {}),
         }
 
     @app.post("/order", response_model=OrderResponse)
@@ -92,16 +94,21 @@ def create_app() -> FastAPI:
         settings: Settings = app.state.settings
         menu: Menu = app.state.menu
 
-        if not settings.api_key:
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    "GEMINI_API_KEY is not set. Get a free key at "
-                    "https://aistudio.google.com/apikey, export it and retry."
-                ),
-            )
-
         try:
+            # Fault injection first (GEMINI_SIMULATE_FAILURE): the demo of
+            # failure modes must not need a real key — see README.
+            if settings.simulate_failure:
+                raise gemini.simulate_failure(settings.simulate_failure)
+
+            if not settings.api_key:
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        "GEMINI_API_KEY is not set. Get a free key at "
+                        "https://aistudio.google.com/apikey, export it and retry."
+                    ),
+                )
+
             result = gemini.extract_order(
                 request.text,
                 menu,

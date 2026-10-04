@@ -75,6 +75,7 @@ and `POST /order` answers `500` with a clear message.
 | `GEMINI_MODEL` | `gemini-3.8-flash` | Any Gemini model with a free tier, e.g. `gemini-3.5-flash` or `gemini-3.5-flash-lite`. |
 | `GEMINI_THINKING_LEVEL` | `low` | `minimal`/`low`/`medium`/`high`. `minimal` is rejected by `gemini-3.7/3.8-flash`. |
 | `GEMINI_FALLBACK_MODELS` | `gemini-3.5-flash-lite, gemini-3.7-flash` | Free-tier models tried in order (each with one retry) when the primary model fails, e.g. on a transient `503 high demand`. Set to an empty value to disable. |
+| `GEMINI_SIMULATE_FAILURE` | not set | Fault injection for demos: `auth` / `quota` / `transient` — the endpoint answers exactly as it would for that real failure (500 / 503+Retry-After / 502), deterministically. Never enable in production. |
 | `GEMINI_TEMPERATURE` | not set | **Legacy 2.5 models only** (see below). |
 
 Any of these can also live in the gitignored `.env` file at the project root
@@ -131,6 +132,19 @@ The failure classification lives in `app/gemini.py: _failure_kind`, the
 retry/fallback policy in `extract_order`; the endpoint maps the three error
 classes to `500` / `503` / `502`.
 
+Every failure mode can be shown deterministically, without waiting for a
+real outage — fault injection via `GEMINI_SIMULATE_FAILURE`:
+
+```bash
+GEMINI_SIMULATE_FAILURE=quota .venv/bin/uvicorn app.main:app --port 8101
+curl -si -X POST localhost:8101/order -H 'Content-Type: application/json' \
+     -d '{"text": "dvije margarite"}'    # -> 503 + Retry-After
+```
+
+or the whole story in one command (see `demo.py`): the mandatory sentences,
+the protocol edge cases, unusual input, and all three failure modes with
+their exact answers.
+
 ## Verifying that it works
 
 With the service running and `GEMINI_API_KEY` exported:
@@ -143,6 +157,16 @@ sends the three mandatory sentences from the task and compares the answers
 with the expected results, plus two protocol checks (blank text → `422`,
 `GET /health`). It prints `PASS`/`FAIL` per case and exits non-zero on any
 failure, so it can also serve as a smoke test after deployment.
+
+For presentations, `demo.py` goes further — the same mandatory sentences
+plus protocol edge cases, unusual input (a question instead of an order,
+politeness, gibberish) and **all three failure modes shown deterministically**
+via `GEMINI_SIMULATE_FAILURE` (rejected key → `500`, exhausted free-tier
+quota → `503` + `Retry-After`, Gemini unreachable → `502`):
+
+```bash
+python demo.py        # needs the normal service running (with a real key)
+```
 
 Without an API key (and without any network), the test suite covers the
 endpoint behaviour, input validation, error paths, post-processing and the

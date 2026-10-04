@@ -36,6 +36,11 @@ DEFAULT_THINKING_LEVEL = "low"
 # (Google occasionally answers 503 "high demand" on the newest models).
 DEFAULT_FALLBACK_MODELS = ("gemini-3.5-flash-lite", "gemini-3.7-flash")
 
+# Fault injection for demos and presentations (default: off). Lets you show
+# deterministically how the service behaves when the Gemini API fails,
+# without waiting for a real outage.
+SIMULATED_FAILURES = ("auth", "quota", "transient")
+
 
 class ConfigError(RuntimeError):
     """Raised at startup when configuration values are invalid."""
@@ -50,6 +55,7 @@ class Settings:
     temperature: float | None  # only sent for legacy (non gemini-3.x) models
     api_key: str | None  # None means "not set" -> endpoint answers 500
     fallback_models: tuple[str, ...] = ()  # tried in order when the primary fails
+    simulate_failure: str | None = None  # fault injection for demos (auth/quota/transient)
 
 
 def load_settings() -> Settings:
@@ -96,6 +102,15 @@ def load_settings() -> Settings:
             # The backend would silently ignore it anyway.
             temperature = None
 
+    # Fault injection for demos/presentations: "auth" / "quota" / "transient".
+    simulate_failure = os.getenv("GEMINI_SIMULATE_FAILURE", "").strip().lower() or None
+    if simulate_failure is not None and simulate_failure not in SIMULATED_FAILURES:
+        allowed = ", ".join(SIMULATED_FAILURES)
+        raise ConfigError(
+            f"GEMINI_SIMULATE_FAILURE={simulate_failure!r} is invalid. "
+            f"Allowed values: {allowed} (or unset to disable)."
+        )
+
     api_key = os.getenv("GEMINI_API_KEY", "").strip() or None
 
     # Fallback models for transient model-side failures (503 "high demand").
@@ -116,6 +131,7 @@ def load_settings() -> Settings:
         temperature=temperature,
         api_key=api_key,
         fallback_models=fallback_models,
+        simulate_failure=simulate_failure,
     )
 
 

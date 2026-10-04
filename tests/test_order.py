@@ -33,6 +33,7 @@ ENV_VARS = (
     "GEMINI_THINKING_LEVEL",
     "GEMINI_TEMPERATURE",
     "GEMINI_FALLBACK_MODELS",
+    "GEMINI_SIMULATE_FAILURE",
 )
 
 
@@ -350,6 +351,50 @@ def test_load_settings_rejects_bad_thinking_level(monkeypatch):
 
 def test_load_settings_rejects_bad_temperature(monkeypatch):
     monkeypatch.setenv("GEMINI_TEMPERATURE", "not-a-number")
+    with pytest.raises(ConfigError):
+        load_settings()
+
+
+# ---------------------------------------------------------------------------
+# Fault injection (GEMINI_SIMULATE_FAILURE) — demoing failure modes live
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("kind, expected_status", [
+    ("auth", 500),       # rejected key: our configuration problem
+    ("quota", 503),      # free-tier quota exhausted: try later
+    ("transient", 502),  # whole chain unreachable: upstream problem
+])
+def test_simulated_failure_answers_the_right_status(monkeypatch, kind, expected_status):
+    """Full HTTP path, no mocks and no API key needed — deterministic demo."""
+
+    monkeypatch.setenv("GEMINI_SIMULATE_FAILURE", kind)
+    app = create_app()
+    with TestClient(app) as test_client:
+        response = test_client.post("/order", json={"text": "dvije margarite"})
+    assert response.status_code == expected_status
+    assert "Simulated failure" in response.json()["detail"]
+
+
+def test_simulated_quota_advertises_retry_after(monkeypatch):
+    monkeypatch.setenv("GEMINI_SIMULATE_FAILURE", "quota")
+    app = create_app()
+    with TestClient(app) as test_client:
+        response = test_client.post("/order", json={"text": "jednu colu"})
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == str(gemini.QUOTA_RETRY_AFTER_S)
+
+
+def test_simulated_failure_shown_in_health(monkeypatch):
+    monkeypatch.setenv("GEMINI_SIMULATE_FAILURE", "transient")
+    app = create_app()
+    with TestClient(app) as test_client:
+        body = test_client.get("/health").json()
+    assert body["simulate_failure"] == "transient"
+
+
+def test_simulated_failure_rejects_unknown_kind(monkeypatch):
+    monkeypatch.setenv("GEMINI_SIMULATE_FAILURE", "everything-at-once")
     with pytest.raises(ConfigError):
         load_settings()
 

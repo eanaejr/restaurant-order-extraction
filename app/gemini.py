@@ -67,6 +67,37 @@ class GeminiQuotaError(GeminiError):
     retry_after_s = QUOTA_RETRY_AFTER_S
 
 
+def simulate_failure(kind: str) -> GeminiError:
+    """Build the error a real Gemini failure of `kind` would produce.
+
+    Fault injection for demos and presentations (GEMINI_SIMULATE_FAILURE):
+    lets you show deterministically how the endpoint behaves when the API
+    rejects the key (auth), exhausts the free-tier quota (quota) or is fully
+    unreachable (transient) — without waiting for a real outage.
+    """
+
+    if kind == "auth":
+        return GeminiAuthError(
+            "Simulated failure (GEMINI_SIMULATE_FAILURE=auth): "
+            "Gemini rejected the API key — check GEMINI_API_KEY "
+            "(https://aistudio.google.com/apikey)."
+        )
+    if kind == "quota":
+        return GeminiQuotaError(
+            "Simulated failure (GEMINI_SIMULATE_FAILURE=quota): "
+            "free-tier rate limit reached (429) on all models. "
+            f"Try again in about {QUOTA_RETRY_AFTER_S} seconds."
+        )
+    if kind == "transient":
+        return GeminiError(
+            "Simulated failure (GEMINI_SIMULATE_FAILURE=transient): "
+            "Gemini is unreachable — the whole model chain failed "
+            "(network/5xx). The calling assistant should tell the guest "
+            "about technical difficulties."
+        )
+    raise ValueError(f"Unknown simulated failure kind: {kind!r}")
+
+
 def load_system_prompt(path: Path = SYSTEM_PROMPT_FILE) -> str:
     """Read the system prompt from app/prompts/system_prompt.md."""
 
