@@ -32,6 +32,9 @@ THINKING_LEVELS = ("minimal", "low", "medium", "high")
 
 DEFAULT_MODEL = "gemini-3.8-flash"
 DEFAULT_THINKING_LEVEL = "low"
+# Free-tier fallbacks for the case when the primary model is overloaded
+# (Google occasionally answers 503 "high demand" on the newest models).
+DEFAULT_FALLBACK_MODELS = ("gemini-3.5-flash-lite", "gemini-3.7-flash")
 
 
 class ConfigError(RuntimeError):
@@ -46,6 +49,7 @@ class Settings:
     thinking_level: str
     temperature: float | None  # only sent for legacy (non gemini-3.x) models
     api_key: str | None  # None means "not set" -> endpoint answers 500
+    fallback_models: tuple[str, ...] = ()  # tried in order when the primary fails
 
 
 def load_settings() -> Settings:
@@ -94,11 +98,24 @@ def load_settings() -> Settings:
 
     api_key = os.getenv("GEMINI_API_KEY", "").strip() or None
 
+    # Fallback models for transient model-side failures (503 "high demand").
+    # Unset -> sensible free-tier defaults; explicitly set to "" -> disabled.
+    fallback_raw = os.getenv("GEMINI_FALLBACK_MODELS")
+    if fallback_raw is None:
+        fallback_models = DEFAULT_FALLBACK_MODELS
+    else:
+        fallback_models = tuple(m.strip() for m in fallback_raw.split(",") if m.strip())
+        # Keep the chain de-duplicated, never re-trying the primary model.
+        fallback_models = tuple(
+            m for m in fallback_models if m and m != model
+        )
+
     return Settings(
         model=model,
         thinking_level=thinking_level,
         temperature=temperature,
         api_key=api_key,
+        fallback_models=fallback_models,
     )
 
 

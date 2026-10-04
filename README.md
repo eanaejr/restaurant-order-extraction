@@ -74,6 +74,7 @@ and `POST /order` answers `500` with a clear message.
 | `GEMINI_API_KEY` | — (required) | Free key from [Google AI Studio](https://aistudio.google.com/apikey). |
 | `GEMINI_MODEL` | `gemini-3.8-flash` | Any Gemini model with a free tier, e.g. `gemini-3.5-flash` or `gemini-3.5-flash-lite`. |
 | `GEMINI_THINKING_LEVEL` | `low` | `minimal`/`low`/`medium`/`high`. `minimal` is rejected by `gemini-3.7/3.8-flash`. |
+| `GEMINI_FALLBACK_MODELS` | `gemini-3.5-flash-lite, gemini-3.7-flash` | Free-tier models tried in order (each with one retry) when the primary model fails, e.g. on a transient `503 high demand`. Set to an empty value to disable. |
 | `GEMINI_TEMPERATURE` | not set | **Legacy 2.5 models only** (see below). |
 
 Any of these can also live in the gitignored `.env` file at the project root
@@ -110,8 +111,12 @@ so it is easy to review exactly what is (and is not) sent to the model.
    prompt; the field descriptions in `app/schemas.py` carry the semantics.
 4. The answer is still validated in Python — never trust the model:
    quantities must be ≥ 1, hallucinated ids are moved to `unavailable`,
-   duplicates are merged. A model or API failure is retried once, then the
-   endpoint answers `502` with a clear message.
+   duplicates are merged. On a model or API failure the call is retried once,
+   then the next free model from the fallback chain is tried (Google's newest
+   models occasionally answer `503 high demand`, which is transient); only
+   after the whole chain fails does the endpoint answer `502` with a clear
+   message. Unknown requests come back in their base form (e.g. "dva
+   hamburgera" → `hamburger`), never replaced by a similar menu item.
 
 ## Verifying that it works
 

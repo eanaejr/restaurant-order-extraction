@@ -12,8 +12,10 @@ Design notes (the whole story is in the README):
   top_p / top_k there, so we never send them for 3.x (GEMINI_TEMPERATURE
   exists only for legacy 2.5 models).
 - Never trust the model: after parsing we strictly validate the result
-  (quantities >= 1, non-empty ids/texts). One retry on any model/API
-  failure, then the endpoint reports 502.
+  (quantities >= 1, non-empty ids/texts). One retry per model, then the next
+  free model from the fallback chain (settings.fallback_models) — a
+  "503 high demand" on the newest model is a normal, transient situation.
+  Only after the whole chain fails does the endpoint report 502.
 """
 
 from __future__ import annotations
@@ -93,12 +95,12 @@ def _validate_result(result: GeminiOrder) -> GeminiOrder:
     return result
 
 
-def _extract_once(client: genai.Client, settings: Settings,
+def _extract_once(client: genai.Client, model: str, settings: Settings,
                   system_prompt: str, order_text: str, menu: Menu) -> GeminiOrder:
-    """One attempt: one Gemini call, parse and strictly validate."""
+    """One attempt on one model: a Gemini call, parse and strict validation."""
 
     response = client.models.generate_content(
-        model=settings.model,
+        model=model,
         contents=build_user_content(order_text, menu),
         config=build_config(settings, system_prompt),
     )
@@ -130,15 +132,24 @@ def extract_order(order_text: str, menu: Menu, settings: Settings,
             )
         client = genai.Client(api_key=settings.api_key)
 
+    models = [settings.model, *settings.fallback_models]
     last_error: Exception | None = None
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        try:
-            return _extract_once(client, settings, system_prompt, order_text, menu)
-        except Exception as exc:  # noqa: BLE001 — one retry on any model failure
-            last_error = exc
-            logger.warning("Gemini attempt %d/%d failed: %s", attempt, MAX_ATTEMPTS, exc)
+    for model in models:
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                result = _extract_once(client, model, settings, system_prompt, order_text, menu)
+                if model != settings.model:
+                    logger.info("Order extracted with fallback model %s.", model)
+                return result
+            except Exception as exc:  # noqa: BLE001 — retry, then next model
+                last_error = exc
+                logger.warning(
+                    "Model %s attempt %d/%d failed: %s",
+                    model, attempt, MAX_ATTEMPTS, exc,
+                )
 
+    chain = ", ".join(models)
     raise GeminiError(
-        f"Gemini could not produce a valid order after {MAX_ATTEMPTS} attempts "
-        f"({type(last_error).__name__}: {last_error})."
+        f"Gemini could not produce a valid order after {MAX_ATTEMPTS} attempt(s) "
+        f"each on {chain} (last error {type(last_error).__name__}: {last_error})."
     )

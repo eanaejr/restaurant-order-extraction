@@ -2,8 +2,8 @@
 
 The Gemini boundary (app.gemini.extract_order) is mocked in the endpoint
 tests, so the suite runs without an API key and without network access.
-The Gemini-facing pieces (config building, strict validation, retry) are
-tested directly with a fake client.
+The Gemini-facing pieces (config building, strict validation, retry and
+model fallback) are tested directly with a fake client.
 
 Every test gets a deterministic environment via the autouse `isolated_env`
 fixture: no local .env file, no variables leaking in or out of a test.
@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 
 from app import config as config_module
 from app import gemini
-from app.config import ConfigError, load_settings
+from app.config import DEFAULT_FALLBACK_MODELS, ConfigError, Settings, load_settings
 from app.main import create_app, normalize_order
 from app.menu import MenuItem, Menu, load_menu
 from app.schemas import GeminiItem, GeminiOrder, GeminiUnavailable
@@ -27,7 +27,13 @@ from app.schemas import GeminiItem, GeminiOrder, GeminiUnavailable
 APP_DIR = Path(__file__).resolve().parent.parent
 MENU_FILE = APP_DIR / "jelovnik.json"
 
-ENV_VARS = ("GEMINI_API_KEY", "GEMINI_MODEL", "GEMINI_THINKING_LEVEL", "GEMINI_TEMPERATURE")
+ENV_VARS = (
+    "GEMINI_API_KEY",
+    "GEMINI_MODEL",
+    "GEMINI_THINKING_LEVEL",
+    "GEMINI_TEMPERATURE",
+    "GEMINI_FALLBACK_MODELS",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +45,19 @@ def make_menu() -> Menu:
     """The real menu shipped with the task."""
 
     return load_menu(MENU_FILE)
+
+
+def make_settings(model: str = "gemini-3.8-flash", api_key: str | None = "test-key",
+                  fallback_models: tuple[str, ...] = ()) -> Settings:
+    """Explicit settings for gemini-call tests (no environment dependence)."""
+
+    return Settings(
+        model=model,
+        thinking_level="low",
+        temperature=None,
+        api_key=api_key,
+        fallback_models=fallback_models,
+    )
 
 
 def fake_extract_order(result: GeminiOrder):
@@ -57,10 +76,12 @@ class FakeResponse:
         self.text = text
 
 
-def make_fake_client(script):
-    """Stands in for genai.Client; returns scripted .text values or raises.
+def make_fake_client(scripts):
+    """Stands in for genai.Client, scripted per model.
 
-    The last script entry repeats once the script is exhausted.
+    scripts: {model: [step, ...]} where a step is either an exception to
+    raise or the response .text to return. The last step for a model repeats;
+    a call with an unexpected model raises KeyError.
     """
 
     class _Models:
@@ -68,9 +89,11 @@ def make_fake_client(script):
             self._outer = outer
 
         def generate_content(self, **kwargs):
-            self._outer.calls += 1
-            index = min(self._outer.calls - 1, len(self._outer._script) - 1)
-            step = self._outer._script[index]
+            model = kwargs["model"]
+            script = self._outer._scripts[model]
+            count = self._outer.model_calls.get(model, 0) + 1
+            self._outer.model_calls[model] = count
+            step = script[min(count - 1, len(script) - 1)]
             if isinstance(step, Exception):
                 raise step
             return FakeResponse(step)
@@ -78,8 +101,8 @@ def make_fake_client(script):
     class _Client:
         def __init__(self) -> None:
             self.models = _Models(self)
-            self.calls = 0
-            self._script = script
+            self.model_calls: dict[str, int] = {}
+            self._scripts = scripts
 
     return _Client()
 
@@ -126,6 +149,7 @@ def test_health(client):
     body = response.json()
     assert body["status"] == "ok"
     assert body["model"] == "gemini-3.8-flash"
+    assert body["fallback_models"] == list(DEFAULT_FALLBACK_MODELS)
     assert body["thinking_level"] == "low"
     assert body["api_key_set"] is True
 
@@ -295,6 +319,28 @@ def test_load_settings_rejects_bad_temperature(monkeypatch):
         load_settings()
 
 
+def test_default_fallback_chain_when_unset():
+    """Google's newest models occasionally answer 503 'high demand'; the
+    default is a small chain of other free-tier models."""
+
+    settings = load_settings()
+    assert settings.model == "gemini-3.8-flash"
+    assert settings.fallback_models == DEFAULT_FALLBACK_MODELS
+
+
+def test_fallback_can_be_disabled(monkeypatch):
+    monkeypatch.setenv("GEMINI_FALLBACK_MODELS", "")
+    settings = load_settings()
+    assert settings.fallback_models == ()
+
+
+def test_fallback_never_repeats_primary(monkeypatch):
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+    monkeypatch.setenv("GEMINI_FALLBACK_MODELS", "gemini-3.5-flash-lite, gemini-3.7-flash")
+    settings = load_settings()
+    assert settings.fallback_models == ("gemini-3.7-flash",)
+
+
 # ---------------------------------------------------------------------------
 # .env handling (local development convenience)
 # ---------------------------------------------------------------------------
@@ -326,57 +372,91 @@ def test_real_environment_wins_over_dotenv(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Gemini call with a fake client (no network)
+# Gemini call with a fake client (no network): retry and fallback
 # ---------------------------------------------------------------------------
 
 
+OK_PIVO = '{"items": [{"id": "pivo", "quantity": 2}], "unavailable": []}'
+
+
 def test_extract_order_parses_structured_response():
-    settings = load_settings()
+    settings = make_settings()
     client = make_fake_client(
-        ['{"items": [{"id": "margarita", "quantity": 2}], "unavailable": []}']
+        {"gemini-3.8-flash": ['{"items": [{"id": "margarita", "quantity": 2}], "unavailable": []}']}
     )
     result = gemini.extract_order("dvije margarite", make_menu(), settings, client=client)
     assert [i.model_dump() for i in result.items] == [
         {"id": "margarita", "quantity": 2}
     ]
     assert result.unavailable == []
-    assert client.calls == 1
+    assert client.model_calls == {"gemini-3.8-flash": 1}
 
 
 def test_extract_order_retries_once_then_succeeds():
-    settings = load_settings()
+    settings = make_settings()
     client = make_fake_client(
-        [
-            RuntimeError("transient API error"),
-            '{"items": [{"id": "pivo", "quantity": 2}], "unavailable": []}',
-        ]
+        {"gemini-3.8-flash": [RuntimeError("transient API error"), OK_PIVO]}
     )
     result = gemini.extract_order("dva piva", make_menu(), settings, client=client)
     assert [i.model_dump() for i in result.items] == [{"id": "pivo", "quantity": 2}]
-    assert client.calls == 2  # failed once, retried, succeeded
+    assert client.model_calls == {"gemini-3.8-flash": 2}  # failed once, retried
 
 
 def test_extract_order_gives_up_after_two_attempts():
-    settings = load_settings()
-    client = make_fake_client([RuntimeError("API down")])
+    settings = make_settings()
+    client = make_fake_client({"gemini-3.8-flash": [RuntimeError("API down")]})
     with pytest.raises(gemini.GeminiError):
         gemini.extract_order("jednu colu", make_menu(), settings, client=client)
-    assert client.calls == 2  # initial try + exactly one retry
+    assert client.model_calls == {"gemini-3.8-flash": 2}  # try + exactly one retry
 
 
 def test_extract_order_rejects_nonpositive_quantity():
-    settings = load_settings()
+    settings = make_settings()
     client = make_fake_client(
-        ['{"items": [{"id": "margarita", "quantity": 0}], "unavailable": []}']
+        {"gemini-3.8-flash": ['{"items": [{"id": "margarita", "quantity": 0}], "unavailable": []}']}
     )
     with pytest.raises(gemini.GeminiError):
         gemini.extract_order("nula margarita", make_menu(), settings, client=client)
-    assert client.calls == 2  # invalid answer retried once, then gave up
+    assert client.model_calls == {"gemini-3.8-flash": 2}
+
+
+def test_extract_order_falls_back_to_next_model():
+    """A '503 high demand' primary is retried once, then the next free model
+    in the chain takes over."""
+
+    settings = make_settings(fallback_models=("gemini-3.5-flash-lite",))
+    client = make_fake_client(
+        {
+            "gemini-3.8-flash": [RuntimeError("503 high demand")],
+            "gemini-3.5-flash-lite": [OK_PIVO],
+        }
+    )
+    result = gemini.extract_order("dva piva", make_menu(), settings, client=client)
+    assert [i.model_dump() for i in result.items] == [{"id": "pivo", "quantity": 2}]
+    assert client.model_calls == {
+        "gemini-3.8-flash": 2,        # try + one retry
+        "gemini-3.5-flash-lite": 1,   # fallback succeeds immediately
+    }
+
+
+def test_extract_order_reports_whole_chain_in_error():
+    settings = make_settings(fallback_models=("gemini-3.5-flash-lite",))
+    client = make_fake_client(
+        {
+            "gemini-3.8-flash": [RuntimeError("503 high demand")],
+            "gemini-3.5-flash-lite": [RuntimeError("also down")],
+        }
+    )
+    with pytest.raises(gemini.GeminiError) as excinfo:
+        gemini.extract_order("jednu colu", make_menu(), settings, client=client)
+    message = str(excinfo.value)
+    assert "gemini-3.8-flash" in message
+    assert "gemini-3.5-flash-lite" in message
+    assert client.model_calls == {"gemini-3.8-flash": 2, "gemini-3.5-flash-lite": 2}
 
 
 def test_extract_order_requires_api_key():
-    settings = load_settings()
-    assert settings.api_key is None
+    settings = make_settings(api_key=None)
     with pytest.raises(gemini.GeminiError) as excinfo:
         gemini.extract_order("jednu colu", make_menu(), settings)
     assert "GEMINI_API_KEY" in str(excinfo.value)

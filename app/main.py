@@ -76,6 +76,7 @@ def create_app() -> FastAPI:
         return {
             "status": "ok",
             "model": settings.model,
+            "fallback_models": list(settings.fallback_models),
             "thinking_level": settings.thinking_level,
             "api_key_set": bool(settings.api_key),
         }

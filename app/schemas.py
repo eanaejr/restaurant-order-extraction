@@ -68,7 +68,7 @@ class GeminiItem(BaseModel):
 
 
 class GeminiUnavailable(BaseModel):
-    text: str = Field(description="What the guest asked for, as literally as they said it, in their own words.")
+    text: str = Field(description="What the guest asked for, in its base (nominative singular) form, e.g. 'hamburger' from 'dva hamburgera'.")
     quantity: int = Field(description="Requested quantity as a positive integer (at least 1). Use 1 when the guest does not specify a number.")
 
 

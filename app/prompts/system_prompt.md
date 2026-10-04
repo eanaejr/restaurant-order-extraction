@@ -32,8 +32,10 @@ else.
 # Things that are not on the menu
 
 - Anything the guest asks for that is not on the menu goes to `unavailable`,
-  in the guest's own words (e.g. "hamburger", "dvije čaše vina"), with the
-  quantity they asked for.
+  with the quantity they asked for.
+- Report what they asked for in its base form — nominative singular in
+  Croatian (e.g. "dva hamburgera" → "hamburger"; "dvije čaše vina" →
+  "čaša vina"; "jedan kebab" → "kebab").
 - NEVER replace such a request with a similar menu item (no "hamburger" →
   `diavola`), and NEVER silently drop it. Losing or swapping it is a failure.
 
