@@ -1,0 +1,148 @@
+# Order extraction service
+
+A small FastAPI service that is one component of a phone-based restaurant
+order assistant: given a sentence a guest actually says (in Croatian), it
+extracts **what** was ordered and **in what quantity**, using a free Gemini
+model together with the restaurant menu (`jelovnik.json`).
+
+```
+POST /order {"text": "dvije margarite i jednu colu"}
+
+{"items": [{"id": "margarita", "quantity": 2},
+           {"id": "coca_cola", "quantity": 1}],
+ "unavailable": []}
+```
+
+Items that exist on the menu come back in `items`, referenced by menu `id`.
+Anything the guest asks for that is **not** on the menu comes back separately
+in `unavailable` — it is never dropped and never silently replaced with a
+similar menu item:
+
+```
+POST /order {"text": "dva hamburgera i jednu margaritu"}
+
+{"items": [{"id": "margarita", "quantity": 1}],
+ "unavailable": [{"text": "hamburger", "quantity": 2}]}
+```
+
+## How the service is meant to be used
+
+The service is deliberately **stateless** and answers only to its caller —
+it never talks to the guest or to the restaurant:
+
+```
+guest (phone) <-> AI assistant (STT/TTS, conversation, session state)
+                        |  POST /order {"text": "..."}
+                        v
+                 this service (extraction only)
+                        |
+                        v
+          {"items": [...], "unavailable": [...]}
+```
+
+`unavailable` is the signal for the calling assistant to continue the
+conversation, e.g. "we don't have hamburgers — would you like a pizza
+instead?". That conversation, and any state, belongs to the assistant, not
+to this service; that keeps the service easy to test, scale and verify.
+
+## Running
+
+Requires Python 3.10+.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+
+export GEMINI_API_KEY=...          # free key: https://aistudio.google.com/apikey
+uvicorn app.main:app --reload      # interactive API docs at http://127.0.0.1:8000/docs
+```
+
+The API key is read only from the `GEMINI_API_KEY` environment variable —
+it is never in the code and never in the repository. Without it the service
+still starts, and `POST /order` answers `500` with a clear message.
+
+## Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `GEMINI_API_KEY` | — (required) | Free key from [Google AI Studio](https://aistudio.google.com/apikey). |
+| `GEMINI_MODEL` | `gemini-3.8-flash` | Any Gemini model with a free tier, e.g. `gemini-3.5-flash` or `gemini-3.5-flash-lite`. |
+| `GEMINI_THINKING_LEVEL` | `low` | `minimal`/`low`/`medium`/`high`. `minimal` is rejected by `gemini-3.7/3.8-flash`. |
+| `GEMINI_TEMPERATURE` | not set | **Legacy 2.5 models only** (see below). |
+
+**Why there is no temperature by default:** on Gemini 3.x models the backend
+ignores `temperature`, `top_p` and `top_k` (they are deprecated for that
+family). Determinism is instead achieved the recommended way: structured
+output (`response_mime_type` + `response_schema`) plus a fixed
+`thinking_level`. We therefore never send a temperature to 3.x models;
+`GEMINI_TEMPERATURE` exists only if you point `GEMINI_MODEL` at an older
+2.5 model.
+
+**Why `thinking_level=low`:** order extraction is simple instruction
+following, not deep reasoning. `low` minimises latency and token usage
+without hurting quality; the schema already constrains the output shape.
+
+The generation parameters live in one function, `app/gemini.py: build_config`,
+so it is easy to review exactly what is (and is not) sent to the model.
+
+## How the extraction works
+
+1. `POST /order` validates the body: a blank or missing `text` answers `422`.
+2. The menu and the guest utterance go to the Gemini model together with a
+   system prompt (`app/prompts/system_prompt.md`) that fixes the rules:
+   match Croatian word forms to menu ids, never invent ids, never replace a
+   missing item with a similar one, unknown requests go to `unavailable`
+   with the guest's own words.
+3. The model must answer in the exact JSON shape of the `GeminiOrder`
+   Pydantic model (`response_schema` + `response_mime_type: application/json`).
+   Per Google's best practice the JSON format is not duplicated inside the
+   prompt; the field descriptions in `app/schemas.py` carry the semantics.
+4. The answer is still validated in Python — never trust the model:
+   quantities must be ≥ 1, hallucinated ids are moved to `unavailable`,
+   duplicates are merged. A model or API failure is retried once, then the
+   endpoint answers `502` with a clear message.
+
+## Verifying that it works
+
+With the service running and `GEMINI_API_KEY` exported:
+
+```bash
+python check_examples.py
+```
+
+sends the three mandatory sentences from the task and compares the answers
+with the expected results, plus two protocol checks (blank text → `422`,
+`GET /health`). It prints `PASS`/`FAIL` per case and exits non-zero on any
+failure, so it can also serve as a smoke test after deployment.
+
+Without an API key (and without any network), the test suite covers the
+endpoint behaviour, input validation, error paths, post-processing and the
+exact parameters sent to Gemini:
+
+```bash
+python -m pytest
+```
+
+Manual checks, including behaviour on unusual input (a question instead of
+an order returns empty lists; gibberish lands in `unavailable` at worst):
+
+```bash
+curl -s -X POST localhost:8000/order -H 'Content-Type: application/json' \
+     -d '{"text": "imate li nešto bez mesa za nas dvoje?"}'
+curl -s -X POST localhost:8000/order -H 'Content-Type: application/json' \
+     -d '{"text": "dvije margarite i jednu colu"}'
+curl -s -X POST localhost:8000/order -H 'Content-Type: application/json' -d '{"text": ""}'   # 422
+```
+
+## What could be improved
+
+The biggest gain would be a small evaluation set of recorded guest sentences
+(run nightly, e.g. with recorded Gemini responses) to catch prompt or model
+regressions instead of relying on three examples. On the reliability side:
+exponential backoff instead of a single retry, request logging/observability,
+and a circuit breaker for the Gemini API. Natural next steps from the task
+itself: answering "do you have something meat-free?" with suggestions from
+the menu, handling the guest changing their mind mid-sentence, and
+suggesting alternatives for unavailable items — all of which fit into the
+same `response_schema` mechanism.

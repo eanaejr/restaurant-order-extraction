@@ -1,0 +1,72 @@
+[
+  {
+    "id": "margarita",
+    "naziv": "Pizza Margarita",
+    "kategorija": "pizza",
+    "cijena_eur": 9.0,
+    "bez_mesa": true
+  },
+  {
+    "id": "capricciosa",
+    "naziv": "Pizza Capricciosa (šunka, gljive)",
+    "kategorija": "pizza",
+    "cijena_eur": 11.0,
+    "bez_mesa": false
+  },
+  {
+    "id": "diavola",
+    "naziv": "Pizza Diavola (ljuta kobasica)",
+    "kategorija": "pizza",
+    "cijena_eur": 11.5,
+    "bez_mesa": false
+  },
+  {
+    "id": "vegetariana",
+    "naziv": "Pizza Vegetariana (povrće)",
+    "kategorija": "pizza",
+    "cijena_eur": 10.5,
+    "bez_mesa": true
+  },
+  {
+    "id": "quattro_formaggi",
+    "naziv": "Pizza Quattro formaggi",
+    "kategorija": "pizza",
+    "cijena_eur": 11.5,
+    "bez_mesa": true
+  },
+  {
+    "id": "cezar_salata",
+    "naziv": "Cezar salata s piletinom",
+    "kategorija": "salata",
+    "cijena_eur": 9.5,
+    "bez_mesa": false
+  },
+  {
+    "id": "mijesana_salata",
+    "naziv": "Miješana salata",
+    "kategorija": "salata",
+    "cijena_eur": 5.0,
+    "bez_mesa": true
+  },
+  {
+    "id": "coca_cola",
+    "naziv": "Coca-Cola 0,33 l",
+    "kategorija": "piće",
+    "cijena_eur": 3.0,
+    "bez_mesa": true
+  },
+  {
+    "id": "mineralna_voda",
+    "naziv": "Mineralna voda 0,5 l",
+    "kategorija": "piće",
+    "cijena_eur": 2.5,
+    "bez_mesa": true
+  },
+  {
+    "id": "pivo",
+    "naziv": "Točeno pivo 0,5 l",
+    "kategorija": "piće",
+    "cijena_eur": 3.5,
+    "bez_mesa": true
+  }
+]
