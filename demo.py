@@ -37,16 +37,33 @@ MANDATORY_CASES = [
         "text": "dvije margarite i jednu colu",
         "items": {"margarita": 2, "coca_cola": 1},
         "unavailable": {},
+        "suggestions": set(),
     },
     {
         "text": "jednu kapričozu i dva piva molim",
         "items": {"capricciosa": 1, "pivo": 2},
         "unavailable": {},
+        "suggestions": set(),
     },
     {
         "text": "dva hamburgera i jednu margaritu",
         "items": {"margarita": 1},
         "unavailable": {"hamburger": 2},
+        "suggestions": set(),
+    },
+    {
+        # Optional case: a question, not an order -> suggestions, empty order.
+        "text": "imate li nešto bez mesa za nas dvoje?",
+        "items": {},
+        "unavailable": {},
+        "suggestions": {"margarita", "vegetariana", "quattro_formaggi", "mijesana_salata"},
+    },
+    {
+        # Optional case: the guest changes their mind mid-sentence.
+        "text": "tri margarite i colu, ma ne, ipak dvije margarite",
+        "items": {"margarita": 2, "coca_cola": 1},
+        "unavailable": {},
+        "suggestions": set(),
     },
 ]
 
@@ -86,20 +103,27 @@ def fail(message: str) -> None:
 
 
 def show_mandatory(client: httpx.Client) -> None:
-    header("1) The three mandatory sentences from the task (asserted)")
+    header("1) The five sentences from the task (asserted)")
     for case in MANDATORY_CASES:
         response = client.post("/order", json={"text": case["text"]})
         body = response.json()
         got_items = {i["id"]: i["quantity"] for i in body.get("items", [])}
         got_unavailable = {u["text"]: u["quantity"] for u in body.get("unavailable", [])}
+        got_suggestions = set(body.get("suggestions", []))
         if (response.status_code == 200
                 and got_items == case["items"]
-                and got_unavailable == case["unavailable"]):
-            ok(f"{case['text']!r} -> items={got_items} unavailable={got_unavailable}")
+                and got_unavailable == case["unavailable"]
+                and got_suggestions == case["suggestions"]):
+            ok(f"{case['text']!r} -> items={got_items} "
+               f"unavailable={got_unavailable} "
+               f"suggestions={sorted(got_suggestions)}")
         else:
             fail(f"{case['text']!r}: HTTP {response.status_code}, got "
-                 f"items={got_items} unavailable={got_unavailable}, "
-                 f"expected items={case['items']} unavailable={case['unavailable']}")
+                 f"items={got_items} unavailable={got_unavailable} "
+                 f"suggestions={sorted(got_suggestions)}, "
+                 f"expected items={case['items']} "
+                 f"unavailable={case['unavailable']} "
+                 f"suggestions={sorted(case['suggestions'])}")
 
 
 def show_protocol(client: httpx.Client) -> None:

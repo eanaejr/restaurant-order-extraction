@@ -134,7 +134,8 @@ def normalize_order(result: GeminiOrder, menu: Menu) -> OrderResponse:
 
     - an item whose id is not on the menu lands in `unavailable` (the request
       is kept — never dropped, never silently replaced by something similar),
-    - duplicate ids and duplicate unavailable texts are merged.
+    - duplicate ids and duplicate unavailable texts are merged,
+    - suggested ids that are not on the menu are dropped.
     """
 
     items: dict[str, int] = {}
@@ -154,6 +155,9 @@ def normalize_order(result: GeminiOrder, menu: Menu) -> OrderResponse:
         text, quantity = unavailable.get(key, (entry.text.strip(), 0))
         unavailable[key] = (text, quantity + entry.quantity)
 
+    # Suggestions: only ids that really exist on the menu, without duplicates.
+    suggestions = list(dict.fromkeys(s for s in result.suggestions if s in menu))
+
     return OrderResponse(
         items=[
             OrderItem(id=item_id, quantity=quantity)
@@ -163,6 +167,7 @@ def normalize_order(result: GeminiOrder, menu: Menu) -> OrderResponse:
             UnavailableItem(text=text, quantity=quantity)
             for text, quantity in unavailable.values()
         ],
+        suggestions=suggestions,
     )
 
 

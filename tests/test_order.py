@@ -187,6 +187,7 @@ def test_order_happy_path(client, monkeypatch):
             {"id": "coca_cola", "quantity": 1},
         ],
         "unavailable": [],
+        "suggestions": [],
     }
 
 
@@ -208,6 +209,62 @@ def test_order_unavailable_passthrough(client, monkeypatch):
     assert response.json() == {
         "items": [{"id": "margarita", "quantity": 1}],
         "unavailable": [{"text": "hamburger", "quantity": 2}],
+        "suggestions": [],
+    }
+
+
+def test_order_meat_free_question_returns_suggestions(client, monkeypatch):
+    """Optional task case: a question is not an order — matching menu ids
+    are suggested, nothing is ordered."""
+
+    monkeypatch.setattr(
+        gemini,
+        "extract_order",
+        fake_extract_order(
+            GeminiOrder(
+                items=[],
+                unavailable=[],
+                suggestions=["margarita", "vegetariana",
+                             "quattro_formaggi", "mijesana_salata"],
+            )
+        ),
+    )
+    response = client.post(
+        "/order", json={"text": "imate li nešto bez mesa za nas dvoje?"}
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "items": [],
+        "unavailable": [],
+        "suggestions": ["margarita", "vegetariana",
+                        "quattro_formaggi", "mijesana_salata"],
+    }
+
+
+def test_order_change_of_mind_final_statement_wins(client, monkeypatch):
+    """Optional task case: 'tri margarite i colu, ma ne, ipak dvije
+    margarite' -> margarita x 2 (corrected) and the cola stands."""
+
+    monkeypatch.setattr(
+        gemini,
+        "extract_order",
+        fake_extract_order(
+            GeminiOrder(
+                items=[GeminiItem(id="margarita", quantity=2),
+                       GeminiItem(id="coca_cola", quantity=1)],
+            )
+        ),
+    )
+    response = client.post(
+        "/order",
+        json={"text": "tri margarite i colu, ma ne, ipak dvije margarite"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "items": [{"id": "margarita", "quantity": 2},
+                  {"id": "coca_cola", "quantity": 1}],
+        "unavailable": [],
+        "suggestions": [],
     }
 
 
@@ -308,6 +365,25 @@ def test_duplicate_items_are_merged():
     assert [u.model_dump() for u in response.unavailable] == [
         {"text": "hamburger", "quantity": 2}
     ]
+
+
+def test_unknown_suggestions_dropped_and_duplicates_merged():
+    """Never trust the model: only ids that exist on the menu survive."""
+
+    menu = make_menu()
+    result = GeminiOrder(
+        suggestions=["margarita", "hamburger", "margarita", "vegetariana"]
+    )
+    response = normalize_order(result, menu)
+    assert response.suggestions == ["margarita", "vegetariana"]
+    assert response.items == []
+    assert response.unavailable == []
+
+
+def test_validate_result_rejects_empty_suggestion():
+    result = GeminiOrder(suggestions=["  "])
+    with pytest.raises(ValueError):
+        gemini._validate_result(result)
 
 
 # ---------------------------------------------------------------------------

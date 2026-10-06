@@ -46,6 +46,28 @@ else.
 - If the utterance is not an order at all (a question about the menu, a
   remark, silence), return empty lists — do not invent an order.
 
+# Questions about what is available
+
+- When the guest asks whether something is available, e.g. "imate li nešto
+  bez mesa za nas dvoje?", that is NOT an order: `items` and `unavailable`
+  stay empty and the matching menu ids go to `suggestions`.
+- For a "bez mesa" (meat-free) question suggest the meat-free food from the
+  menu (`bez_mesa`: true, but not drinks — a cola is not an answer to "what
+  can we eat without meat"). In this menu that means the pizzas and salads.
+- The number of people ("za nas dvoje") is not a quantity anywhere.
+- A question and an order can arrive in the same utterance ("imate li nešto
+  bez mesa? ... dobro, onda jednu vegetarijanu i colu") — answer the question
+  in `suggestions` AND take the order into `items`.
+
+# The guest changes their mind
+
+- If the guest retracts or corrects part of the order mid-sentence, the
+  final statement wins for the corrected part, and everything they did NOT
+  correct stands. Example: "tri margarite i colu, ma ne, ipak dvije
+  margarite" -> margarita ends as 2 (corrected from 3) and the cola stays.
+- Never report the retracted version alongside the final one: what was
+  retracted disappears completely.
+
 # Output
 
 - Respond with the structured data only, in the exact shape defined by the

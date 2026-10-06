@@ -25,6 +25,25 @@ POST /order {"text": "dva hamburgera i jednu margaritu"}
  "unavailable": [{"text": "hamburger", "quantity": 2}]}
 ```
 
+**Response format extension — `suggestions`.** The proposed format is
+extended by exactly one field, with this reason: the optional case from the
+task where the guest asks what is available ("imate li nešto bez mesa za nas
+dvoje?") needs somewhere to go — it is not an order, so `items` and
+`unavailable` stay empty and the matching menu ids come back in
+`suggestions` (meat-free **food**, no drinks), with nothing invented:
+
+```
+POST /order {"text": "imate li nešto bez mesa za nas dvoje?"}
+
+{"items": [], "unavailable": [],
+ "suggestions": ["margarita", "vegetariana", "quattro_formaggi", "mijesana_salata"]}
+```
+
+The second optional case — the guest changing their mind mid-sentence —
+needs no format change at all ("tri margarite i colu, ma ne, ipak dvije
+margarite" → margarita × 2, the un-corrected cola stands). All five
+sentences from the task are asserted by `check_examples.py`.
+
 ## How the service is meant to be used
 
 The service is deliberately **stateless** and answers only to its caller —
@@ -105,7 +124,10 @@ so it is easy to review exactly what is (and is not) sent to the model.
    system prompt (`app/prompts/system_prompt.md`) that fixes the rules:
    match Croatian word forms to menu ids, never invent ids, never replace a
    missing item with a similar one, unknown requests go to `unavailable`
-   with the guest's own words.
+   with the guest's own words, a question about what is available (e.g.
+   "bez mesa?") is answered with `suggestions` instead of an order, and when
+   the guest changes their mind mid-sentence the final statement wins for
+   the corrected part while everything un-corrected stands.
 3. The model must answer in the exact JSON shape of the `GeminiOrder`
    Pydantic model (`response_schema` + `response_mime_type: application/json`).
    Per Google's best practice the JSON format is not duplicated inside the
@@ -124,7 +146,9 @@ so it is easy to review exactly what is (and is not) sent to the model.
 | API key invalid/blocked (`401`/`403`) | no pointless retries or fallbacks — the key is the problem, not the models: `500` with a clear "check GEMINI_API_KEY" message |
 | Model returns malformed or nonsensical JSON | strict validation rejects it (retry + fallback), else `502` with the whole chain named |
 | Blank/whitespace text, missing field | `422` |
-| Utterance is a question or small talk, not an order | empty `items` and `unavailable` — nothing is invented |
+| Utterance is a question about what is available (e.g. "bez mesa?") | empty order + matching menu ids in `suggestions` |
+| Utterance is small talk, not an order at all | empty `items`, `unavailable` and `suggestions` — nothing is invented |
+| The guest changes their mind mid-sentence | the final statement wins for the corrected part, everything un-corrected stands |
 | Gemini (or the network) is fully down | whole chain exhausted → `502`; the calling assistant tells the guest — conversation handling belongs to the caller, this service stays stateless |
 | This service itself is down | the caller gets a connection error and degrades on its own (an order-by-phone assistant should say "technical difficulties", not hang up) |
 
@@ -191,10 +215,9 @@ curl -s -X POST localhost:8000/order -H 'Content-Type: application/json' -d '{"t
 
 The biggest gain would be a small evaluation set of recorded guest sentences
 (run nightly, e.g. with recorded Gemini responses) to catch prompt or model
-regressions instead of relying on three examples. On the reliability side:
-exponential backoff instead of a single retry, request logging/observability,
-and a circuit breaker for the Gemini API. Natural next steps from the task
-itself: answering "do you have something meat-free?" with suggestions from
-the menu, handling the guest changing their mind mid-sentence, and
-suggesting alternatives for unavailable items — all of which fit into the
-same `response_schema` mechanism.
+regressions instead of relying on five examples. On the reliability side:
+exponential backoff instead of a fixed pause, request logging/observability,
+and a circuit breaker for the Gemini API. The remaining natural extension
+from the task: suggesting alternatives for unavailable items (e.g. a
+meat-free option to replace a requested hamburger), which would fit into
+the same `suggestions` mechanism.

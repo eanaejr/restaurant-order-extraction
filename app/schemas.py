@@ -51,10 +51,12 @@ class UnavailableItem(BaseModel):
 
 
 class OrderResponse(BaseModel):
-    """Response of POST /order — the format proposed in the task."""
+    """Response of POST /order — the format proposed in the task, plus the
+    `suggestions` extension (the reason is explained in the README)."""
 
     items: list[OrderItem] = Field(default_factory=list, description="Ordered items that exist on the menu.")
     unavailable: list[UnavailableItem] = Field(default_factory=list, description="Requested items that do not exist on the menu.")
+    suggestions: list[str] = Field(default_factory=list, description="Menu ids suggested when the guest asked what is available (e.g. meat-free options); empty otherwise.")
 
 
 # --------------------------------------------------------------------------
@@ -75,3 +77,4 @@ class GeminiUnavailable(BaseModel):
 class GeminiOrder(BaseModel):
     items: list[GeminiItem] = Field(default_factory=list, description="Everything the guest ordered that matches a menu item by id.")
     unavailable: list[GeminiUnavailable] = Field(default_factory=list, description="Everything the guest asked for that is NOT on the menu. Never substitute a similar menu item, never drop such requests.")
+    suggestions: list[str] = Field(default_factory=list, description="Menu ids to suggest when the guest asks what is available (e.g. 'imate li nešto bez mesa?' -> the meat-free food ids). Only ids from the provided menu; food rather than drinks for food questions; empty when the guest did not ask for suggestions.")

@@ -149,6 +149,9 @@ def _validate_result(result: GeminiOrder) -> GeminiOrder:
     for item in result.unavailable:
         if not item.text.strip() or item.quantity < 1:
             raise ValueError(f"invalid model item: {item!r}")
+    for suggestion in result.suggestions:
+        if not suggestion.strip():
+            raise ValueError(f"invalid model suggestion: {suggestion!r}")
     return result
 
 
