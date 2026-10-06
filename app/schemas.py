@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator
 
-
 # --------------------------------------------------------------------------
 # Public API models
 # --------------------------------------------------------------------------

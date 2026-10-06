@@ -8,11 +8,12 @@ Usage (two terminals):
     python demo.py
 
 What it shows, in order:
- 1. The three mandatory sentences from the task (hard PASS/FAIL asserts)
+ 1. The five sentences from the task, asserted (three mandatory + the two
+    optional cases: meat-free suggestions and the changed mind)
  2. Protocol edge cases over HTTP (blank text -> 422, /health)
- 3. Informational cases (a question instead of an order, politeness,
-    gibberish) — printed so you can talk about them; model behaviour,
-    so no hard asserts
+ 3. Informational cases (a question about an item, politeness, gibberish)
+    — printed so you can talk about them; model behaviour, so no hard
+    asserts
  4. All three failure modes, deterministically — spins up temporary
     services with GEMINI_SIMULATE_FAILURE and shows the exact answers
     for a rejected key (500), exhausted free-tier quota (503 +
@@ -69,7 +70,7 @@ MANDATORY_CASES = [
 
 # Model-dependent behaviour: printed, not asserted.
 INFORMATIONAL_CASES = [
-    "imate li nešto bez mesa za nas dvoje?",   # a question, not an order
+    "je li diavola jako ljuta?",               # a question about an item, not an order
     "ništa, hvala lijepa",                      # explicitly nothing
     "asdfgh qwerty 12345",                      # gibberish
     "dva piva i tri margarite, molim lijepo",   # politeness + number words

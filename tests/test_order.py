@@ -21,7 +21,7 @@ from app import config as config_module
 from app import gemini
 from app.config import DEFAULT_FALLBACK_MODELS, ConfigError, Settings, load_settings
 from app.main import create_app, normalize_order
-from app.menu import MenuItem, Menu, load_menu
+from app.menu import Menu, MenuItem, load_menu
 from app.schemas import GeminiItem, GeminiOrder, GeminiUnavailable
 
 APP_DIR = Path(__file__).resolve().parent.parent

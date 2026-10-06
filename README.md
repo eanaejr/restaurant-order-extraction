@@ -10,7 +10,8 @@ POST /order {"text": "dvije margarite i jednu colu"}
 
 {"items": [{"id": "margarita", "quantity": 2},
            {"id": "coca_cola", "quantity": 1}],
- "unavailable": []}
+ "unavailable": [],
+ "suggestions": []}
 ```
 
 Items that exist on the menu come back in `items`, referenced by menu `id`.
@@ -22,7 +23,8 @@ similar menu item:
 POST /order {"text": "dva hamburgera i jednu margaritu"}
 
 {"items": [{"id": "margarita", "quantity": 1}],
- "unavailable": [{"text": "hamburger", "quantity": 2}]}
+ "unavailable": [{"text": "hamburger", "quantity": 2}],
+ "suggestions": []}
 ```
 
 **Response format extension — `suggestions`.** The proposed format is
@@ -114,9 +116,6 @@ output (`response_mime_type` + `response_schema`) plus a fixed
 following, not deep reasoning. `low` minimises latency and token usage
 without hurting quality; the schema already constrains the output shape.
 
-The generation parameters live in one function, `app/gemini.py: build_config`,
-so it is easy to review exactly what is (and is not) sent to the model.
-
 ## How the extraction works
 
 1. `POST /order` validates the body: a blank or missing `text` answers `422`.
@@ -165,9 +164,9 @@ curl -si -X POST localhost:8101/order -H 'Content-Type: application/json' \
      -d '{"text": "dvije margarite"}'    # -> 503 + Retry-After
 ```
 
-or the whole story in one command (see `demo.py`): the mandatory sentences,
-the protocol edge cases, unusual input, and all three failure modes with
-their exact answers.
+or the whole story in one command (see `demo.py`): the five sentences from
+the task, the protocol edge cases, unusual input, and all three failure
+modes with their exact answers.
 
 ## Verifying that it works
 
@@ -177,13 +176,14 @@ With the service running and `GEMINI_API_KEY` exported:
 python check_examples.py
 ```
 
-sends the three mandatory sentences from the task and compares the answers
-with the expected results, plus two protocol checks (blank text → `422`,
-`GET /health`). It prints `PASS`/`FAIL` per case and exits non-zero on any
-failure, so it can also serve as a smoke test after deployment.
+sends the five sentences from the task (the three mandatory ones plus the
+two optional cases) and compares the answers with the expected results,
+plus two protocol checks (blank text → `422`, `GET /health`). It prints
+`PASS`/`FAIL` per case and exits non-zero on any failure, so it can also
+serve as a smoke test after deployment.
 
-For presentations, `demo.py` goes further — the same mandatory sentences
-plus protocol edge cases, unusual input (a question instead of an order,
+For presentations, `demo.py` goes further — the same five sentences
+plus protocol edge cases, unusual input (a question about an item,
 politeness, gibberish) and **all three failure modes shown deterministically**
 via `GEMINI_SIMULATE_FAILURE` (rejected key → `500`, exhausted free-tier
 quota → `503` + `Retry-After`, Gemini unreachable → `502`):
@@ -200,8 +200,9 @@ exact parameters sent to Gemini:
 python -m pytest
 ```
 
-Manual checks, including behaviour on unusual input (a question instead of
-an order returns empty lists; gibberish lands in `unavailable` at worst):
+Manual checks, including behaviour on unusual input (the meat-free question
+returns `suggestions`, not an order; gibberish lands in `unavailable` at
+worst):
 
 ```bash
 curl -s -X POST localhost:8000/order -H 'Content-Type: application/json' \

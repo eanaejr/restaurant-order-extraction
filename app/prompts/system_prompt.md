@@ -43,8 +43,9 @@ else.
 
 - Greetings, politeness, "molim", "hvala", filler words and small talk are
   not part of the order.
-- If the utterance is not an order at all (a question about the menu, a
-  remark, silence), return empty lists — do not invent an order.
+- If the utterance is neither an order nor a question about what is
+  available (a remark, silence, a question about a single item such as
+  "je li diavola ljuta?"), return empty lists — do not invent an order.
 
 # Questions about what is available
 

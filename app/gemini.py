@@ -222,7 +222,7 @@ def extract_order(order_text: str, menu: Menu, settings: Settings,
                 if model != settings.model:
                     logger.info("Order extracted with fallback model %s.", model)
                 return result
-            except Exception as exc:  # noqa: BLE001 — classified below
+            except Exception as exc:  # classified below by _failure_kind
                 kind = _failure_kind(exc)
                 if kind == "auth":
                     # Retrying or switching models cannot fix a rejected key.
