@@ -215,10 +215,9 @@ curl -s -X POST localhost:8000/order -H 'Content-Type: application/json' -d '{"t
 ## What could be improved
 
 The biggest gain would be a small evaluation set of recorded guest sentences
-(run nightly, e.g. with recorded Gemini responses) to catch prompt or model
-regressions instead of relying on five examples. On the reliability side:
-exponential backoff instead of a fixed pause, request logging/observability,
-and a circuit breaker for the Gemini API. The remaining natural extension
-from the task: suggesting alternatives for unavailable items (e.g. a
-meat-free option to replace a requested hamburger), which would fit into
-the same `suggestions` mechanism.
+with expected results, run regularly — a pass rate would turn "it seems to
+work" into a measured number and catch prompt regressions the way
+`check_examples.py` cannot. On the reliability side: exponential backoff and
+a circuit breaker for the Gemini API. The natural next extension from the
+task: suggesting alternatives for unavailable items through the same
+`suggestions` mechanism.
