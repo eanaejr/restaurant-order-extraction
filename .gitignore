@@ -1,5 +1,8 @@
-# Secrets — never commit keys
-.env
+# Secrets — never commit keys.
+# .env* covers .env, .env.backup, .env.old, .env.local, ...
+# (key rotation after the review must never leak into the repo)
+.env*
+!.env.example
 
 # Python
 __pycache__/
@@ -9,11 +12,28 @@ venv/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+build/
+dist/
+*.egg-info/
+.coverage
+coverage.xml
+htmlcov/
 
-# OS / editor
+# Archives / logs (e.g. an accidental zip made for e-mail)
+*.zip
+*.log
+
+# macOS
 .DS_Store
+._*
+.Spotlight-V100
+.Trashes
+__MACOSX/
+
+# Editors
 .idea/
 .vscode/
+*.swp
 
 # The task PDF is recruiter material - keep it out of the public repo
 Zadatak_student_AI_rok_7-10-2026.pdf
