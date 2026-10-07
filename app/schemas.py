@@ -76,4 +76,4 @@ class GeminiUnavailable(BaseModel):
 class GeminiOrder(BaseModel):
     items: list[GeminiItem] = Field(default_factory=list, description="Everything the guest ordered that matches a menu item by id.")
     unavailable: list[GeminiUnavailable] = Field(default_factory=list, description="Everything the guest asked for that is NOT on the menu. Never substitute a similar menu item, never drop such requests.")
-    suggestions: list[str] = Field(default_factory=list, description="Menu ids to suggest when the guest asks what is available (e.g. 'imate li nešto bez mesa?' -> the meat-free food ids). Only ids from the provided menu; food rather than drinks for food questions; empty when the guest did not ask for suggestions.")
+    suggestions: list[str] = Field(default_factory=list, description="Menu ids to suggest when the guest asks what is available, e.g. 'imate li nešto bez mesa?' -> the meat-free food ids. Only ids from the provided menu; no drinks for food questions; leave empty when the menu data cannot answer the question (never guess an item's properties) or when the guest did not ask for suggestions.")

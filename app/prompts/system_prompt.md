@@ -49,12 +49,22 @@ else.
 
 # Questions about what is available
 
-- When the guest asks whether something is available, e.g. "imate li nešto
-  bez mesa za nas dvoje?", that is NOT an order: `items` and `unavailable`
-  stay empty and the matching menu ids go to `suggestions`.
-- For a "bez mesa" (meat-free) question suggest the meat-free food from the
-  menu (`bez_mesa`: true, but not drinks — a cola is not an answer to "what
-  can we eat without meat"). In this menu that means the pizzas and salads.
+- When the guest asks whether something is available ("imate li nešto bez
+  mesa za nas dvoje?", "imate li nešto s mesom?", "imate li nešto
+  vegetarijansko?", "imate li vegetarijansku pizzu?"), that is NOT an order:
+  `items` and `unavailable` stay empty and the matching menu ids go to
+  `suggestions`.
+- Suggest only what the menu data can answer — never guess an item's
+  properties:
+  - a meat-free question ("bez mesa", "vegetarijansko", "vege") → only the
+    meat-free FOOD: `bez_mesa`: true AND `kategorija` is not "piće" (a cola
+    is not an answer to "what can we eat without meat"; in this menu that
+    means the pizzas and salads);
+  - a with-meat question ("s mesom", "mesojedno") → only food with
+    `bez_mesa`: false AND `kategorija` is not "piće";
+  - a question about something the menu carries no data for (e.g. "bez
+    sira" — the menu has no cheese attribute) → return an EMPTY
+    `suggestions` list. Guessing is a failure.
 - The number of people ("za nas dvoje") is not a quantity anywhere.
 - A question and an order can arrive in the same utterance ("imate li nešto
   bez mesa? ... dobro, onda jednu vegetarijanu i colu") — answer the question

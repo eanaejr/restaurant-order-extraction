@@ -146,7 +146,8 @@ without hurting quality; the schema already constrains the output shape.
 | Model returns malformed or nonsensical JSON | strict validation rejects it (retry + fallback), else `502` with the whole chain named |
 | A call stalls instead of erroring (observed live) | cut off after 60 s — an explicit per-call HTTP timeout (the SDK has none by default), then handled like any transient failure: retry, next model |
 | Blank/whitespace text, missing field | `422` |
-| Utterance is a question about what is available (e.g. "bez mesa?") | empty order + matching menu ids in `suggestions` |
+| Utterance is a question about what is available (e.g. "bez mesa?", "s mesom?", "vegetarijansko?") | empty order + matching menu ids in `suggestions` |
+| Question the menu data cannot answer (e.g. "bez sira?" — the menu carries no cheese attribute) | empty `suggestions` — the model must never guess an item's properties (verified live: without this rule it hallucinated a cheese-free margarita) |
 | Utterance is small talk, not an order at all | empty `items`, `unavailable` and `suggestions` — nothing is invented |
 | The guest changes their mind mid-sentence | the final statement wins for the corrected part, everything un-corrected stands |
 | Gemini (or the network) is fully down | whole chain exhausted → `502`; the calling assistant tells the guest — conversation handling belongs to the caller, this service stays stateless |
