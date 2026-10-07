@@ -7,7 +7,6 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-# The menu file shipped with the task, at the project root.
 MENU_FILE = Path(__file__).resolve().parent.parent / "jelovnik.json"
 
 

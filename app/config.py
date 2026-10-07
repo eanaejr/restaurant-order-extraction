@@ -1,18 +1,10 @@
 """Application configuration, read from environment variables.
 
-The Gemini API key is never hardcoded nor committed to the repository — it is
-read from the GEMINI_API_KEY environment variable, as the task requires.
-
-For local development, a `.env` file at the project root (gitignored) can
-conveniently populate those variables; real environment variables always win
-(override=False), so production deployments are unaffected either way.
-
-Why there is no temperature by default: on the current Gemini 3.x models
-(gemini-3.8-flash and siblings) the backend *ignores* temperature / top_p /
-top_k. Determinism is instead controlled via thinking_level + response_schema,
-which is exactly what this service does. GEMINI_TEMPERATURE exists only for
-legacy Gemini 2.5 models, should you point GEMINI_MODEL at one.
-"""
+The Gemini API key comes only from GEMINI_API_KEY — never hardcoded, never
+committed. For local development a gitignored `.env` file at the project root
+may populate the variables; real environment variables always win
+(override=False). No temperature by default: the Gemini 3.x backend ignores
+it — determinism comes from thinking_level + response_schema."""
 
 from __future__ import annotations
 
@@ -22,24 +14,18 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# The .env file for local development, at the project root (gitignored).
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ENV_FILE = PROJECT_ROOT / ".env"
 
-# "minimal" is supported by some models (3.5/3.6-flash) but rejected with an
-# API error by gemini-3.7-flash and gemini-3.8-flash, hence the "low" default.
+# "minimal" is rejected by gemini-3.7/3.8-flash, hence the "low" default.
 THINKING_LEVELS = ("minimal", "low", "medium", "high")
 
 DEFAULT_MODEL = "gemini-3.8-flash"
 DEFAULT_THINKING_LEVEL = "low"
-# Free-tier fallbacks for the case when the primary model is overloaded
-# (Google occasionally answers 503 "high demand" on the newest models).
+# The newest models occasionally answer 503 "high demand".
 DEFAULT_FALLBACK_MODELS = ("gemini-3.5-flash-lite", "gemini-3.7-flash")
 
-# Fault injection for demos and presentations (default: off). Lets you show
-# deterministically how the service behaves when the Gemini API fails,
-# without waiting for a real outage.
-SIMULATED_FAILURES = ("auth", "quota", "transient")
+SIMULATED_FAILURES = ("auth", "quota", "transient")  # fault injection, off by default
 
 
 class ConfigError(RuntimeError):
@@ -52,24 +38,17 @@ class Settings:
 
     model: str
     thinking_level: str
-    temperature: float | None  # only sent for legacy (non gemini-3.x) models
-    api_key: str | None  # None means "not set" -> endpoint answers 500
-    fallback_models: tuple[str, ...] = ()  # tried in order when the primary fails
-    simulate_failure: str | None = None  # fault injection for demos (auth/quota/transient)
+    temperature: float | None  # only sent for legacy (non-3.x) models
+    api_key: str | None  # None -> POST /order answers 500
+    fallback_models: tuple[str, ...] = ()
+    simulate_failure: str | None = None
 
 
 def load_settings() -> Settings:
-    """Read settings from the environment.
+    """Read settings from the environment; raises ConfigError on values that
+    would only produce confusing API errors later. A missing API key is not
+    an error here — POST /order answers a clear 500 (see app/main.py)."""
 
-    Raises ConfigError for values that would produce confusing API errors
-    later (unknown thinking level, malformed temperature). A missing API key
-    is deliberately NOT an error here: the service still starts, and POST
-    /order returns a clear 500 instead (see app/main.py).
-    """
-
-    # Local development convenience: populate the environment from a .env
-    # file at the project root if it exists. Real environment variables
-    # always win (override=False).
     if ENV_FILE.exists():
         load_dotenv(ENV_FILE, override=False)
 
@@ -98,11 +77,8 @@ def load_settings() -> Settings:
                 f"got {temperature}."
             )
         if _is_gemini_3(model):
-            # Not an error: document the behaviour instead of failing.
-            # The backend would silently ignore it anyway.
-            temperature = None
+            temperature = None  # not an error — the 3.x backend ignores it anyway
 
-    # Fault injection for demos/presentations: "auth" / "quota" / "transient".
     simulate_failure = os.getenv("GEMINI_SIMULATE_FAILURE", "").strip().lower() or None
     if simulate_failure is not None and simulate_failure not in SIMULATED_FAILURES:
         allowed = ", ".join(SIMULATED_FAILURES)
@@ -113,14 +89,12 @@ def load_settings() -> Settings:
 
     api_key = os.getenv("GEMINI_API_KEY", "").strip() or None
 
-    # Fallback models for transient model-side failures (503 "high demand").
-    # Unset -> sensible free-tier defaults; explicitly set to "" -> disabled.
+    # unset -> defaults; explicitly set to "" -> fallback disabled
     fallback_raw = os.getenv("GEMINI_FALLBACK_MODELS")
     if fallback_raw is None:
         fallback_models = DEFAULT_FALLBACK_MODELS
     else:
         fallback_models = tuple(m.strip() for m in fallback_raw.split(",") if m.strip())
-        # Keep the chain de-duplicated, never re-trying the primary model.
         fallback_models = tuple(
             m for m in fallback_models if m and m != model
         )

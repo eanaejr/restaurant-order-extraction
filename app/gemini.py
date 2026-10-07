@@ -1,25 +1,4 @@
-"""Gemini call: turns a guest utterance into a structured order.
-
-Design notes (the whole story is in the README):
-
-- Structured output: `response_mime_type="application/json"` +
-  `response_schema=GeminiOrder` — the model must answer in exactly that
-  JSON shape, and the field descriptions in app/schemas.py carry the
-  semantics. Per Google's best practice the JSON format is NOT duplicated
-  in the prompt itself.
-- `thinking_level="low"`: on Gemini 3.x models this is the recommended knob
-  for determinism, latency and cost. The backend ignores temperature /
-  top_p / top_k there, so we never send them for 3.x (GEMINI_TEMPERATURE
-  exists only for legacy 2.5 models).
-- Never trust the model: after parsing we strictly validate the result
-  (quantities >= 1, non-empty ids/texts). Failures are classified (see
-  _failure_kind): a rejected API key stops immediately (retrying cannot
-  fix it), a 429 rate limit gets a longer pause, anything transient gets
-  one retry per model and then the next free model from the fallback chain
-  (a "503 high demand" on the newest models is a normal, transient
-  situation). Only after the whole chain fails does the endpoint report
-  the failure — 502 transient, 503 with Retry-After when only quota-limited.
-"""
+"""Gemini call: structured output, strict validation, retry + model fallback."""
 
 from __future__ import annotations
 
@@ -39,48 +18,39 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT_FILE = Path(__file__).resolve().parent / "prompts" / "system_prompt.md"
 
 MAX_ATTEMPTS = 2  # one retry per model
-RETRY_BACKOFF_S = 0.5  # pause between attempts on the same model
-QUOTA_BACKOFF_S = 2.0  # longer pause while being rate-limited (429)
-QUOTA_RETRY_AFTER_S = 60  # advertised to the caller via the Retry-After header
-# Per-call HTTP timeout, in milliseconds (the SDK's HttpOptions.timeout is
-# in ms and has no default). Google occasionally *stalls* a call instead of
-# erroring quickly (observed live) — without this the endpoint could hang
-# for minutes. A timed-out call becomes an ordinary transient error, so
-# the retry/fallback chain takes over.
+RETRY_BACKOFF_S = 0.5
+QUOTA_BACKOFF_S = 2.0  # longer pause while rate-limited (429)
+QUOTA_RETRY_AFTER_S = 60
+# Per-call HTTP timeout in milliseconds (the SDK's timeout is in ms and has
+# no default); a stalled call becomes a transient error instead of a hang.
 CALL_TIMEOUT_MS = 60_000
 
-# HTTP codes from the Gemini API that retrying or switching models cannot fix.
-AUTH_CODES = {401, 403}
+AUTH_CODES = {401, 403}  # retrying or switching models cannot fix these
 
 
 class GeminiError(RuntimeError):
     """The model chain could not produce a valid order (transient failures)."""
 
-    status_code = 502  # bad gateway: the upstream (Gemini) is the problem
+    status_code = 502  # upstream (Gemini) problem
     retry_after_s: int | None = None
 
 
 class GeminiAuthError(GeminiError):
     """Google rejected our API key — retrying or switching cannot help."""
 
-    status_code = 500  # our configuration is the problem, not an outage
+    status_code = 500  # our configuration, not an outage
 
 
 class GeminiQuotaError(GeminiError):
     """Every model in the chain answered 429 — free-tier quota exhausted."""
 
-    status_code = 503  # try again later
+    status_code = 503
     retry_after_s = QUOTA_RETRY_AFTER_S
 
 
 def simulate_failure(kind: str) -> GeminiError:
-    """Build the error a real Gemini failure of `kind` would produce.
-
-    Fault injection for demos and presentations (GEMINI_SIMULATE_FAILURE):
-    lets you show deterministically how the endpoint behaves when the API
-    rejects the key (auth), exhausts the free-tier quota (quota) or is fully
-    unreachable (transient) — without waiting for a real outage.
-    """
+    """Fault injection (GEMINI_SIMULATE_FAILURE): the error a real failure of
+    `kind` would produce — deterministic demos without a real outage."""
 
     if kind == "auth":
         return GeminiAuthError(
@@ -125,22 +95,17 @@ def build_user_content(order_text: str, menu: Menu) -> str:
 
 
 def build_config(settings: Settings, system_prompt: str) -> dict[str, object]:
-    """Generation config for the call (a plain dict — the SDK converts it).
-
-    Kept as a separate pure function so tests can assert exactly which
-    parameters are (not) being sent — e.g. that no temperature is sent for
-    Gemini 3.x models.
-    """
+    """Generation config for the call (pure, so tests can assert exactly
+    what is — and is not — sent)."""
 
     config: dict[str, object] = {
         "system_instruction": system_prompt,
-        # Structured output: the model must answer in the GeminiOrder shape.
         "response_mime_type": "application/json",
         "response_schema": GeminiOrder,
-        # The determinism/latency/cost knob for Gemini 3.x.
+        # the determinism/latency/cost knob on Gemini 3.x
         "thinking_config": {"thinking_level": settings.thinking_level},
     }
-    # Only for legacy models (2.5 family); the 3.x backend ignores temperature.
+    # Only for legacy 2.5 models — the 3.x backend ignores temperature.
     if settings.temperature is not None:
         config["temperature"] = settings.temperature
     return config
@@ -181,15 +146,8 @@ def _extract_once(client: genai.Client, model: str, settings: Settings,
 
 
 def _failure_kind(exc: Exception) -> str:
-    """Classify a failure to decide what can still help.
-
-    'auth'      — Google rejected the key (401/403): stop immediately,
-                  retrying or switching models cannot fix it.
-    'quota'     — 429 rate limit: pause longer, then retry / next model;
-                  if every model is quota-limited, tell the caller to wait.
-    'transient' — network errors, 5xx, or our own validation rejecting the
-                  model's answer: a retry (same or next model) can fix it.
-    """
+    """'auth' (401/403 — nothing helps, stop), 'quota' (429 — pause, retry)
+    or 'transient' (network/5xx/bad answer — a retry can help)."""
 
     code = getattr(exc, "code", None)
     if code in AUTH_CODES:
@@ -202,12 +160,8 @@ def _failure_kind(exc: Exception) -> str:
 def extract_order(order_text: str, menu: Menu, settings: Settings,
                   client: genai.Client | None = None,
                   system_prompt: str | None = None) -> GeminiOrder:
-    """Turn a guest utterance into a validated GeminiOrder.
-
-    Raises GeminiAuthError (key rejected), GeminiQuotaError (all models
-    rate-limited) or GeminiError (the whole chain failed) — the endpoint
-    maps them to 500 / 503 / 502 respectively.
-    """
+    """Turn a guest utterance into a validated GeminiOrder; raises
+    GeminiAuthError / GeminiQuotaError / GeminiError (500 / 503 / 502)."""
 
     system_prompt = system_prompt if system_prompt is not None else load_system_prompt()
     if client is None:
@@ -216,8 +170,6 @@ def extract_order(order_text: str, menu: Menu, settings: Settings,
                 "GEMINI_API_KEY is not set. Get a free key at "
                 "https://aistudio.google.com/apikey and export it."
             )
-        # Explicit per-call timeout (in ms, see CALL_TIMEOUT_MS): a stalled
-        # call must become an error, never a minutes-long hang.
         client = genai.Client(
             api_key=settings.api_key,
             http_options={"timeout": CALL_TIMEOUT_MS},
@@ -233,10 +185,9 @@ def extract_order(order_text: str, menu: Menu, settings: Settings,
                 if model != settings.model:
                     logger.info("Order extracted with fallback model %s.", model)
                 return result
-            except Exception as exc:  # classified below by _failure_kind
+            except Exception as exc:
                 kind = _failure_kind(exc)
                 if kind == "auth":
-                    # Retrying or switching models cannot fix a rejected key.
                     raise GeminiAuthError(
                         "Gemini rejected the API key — check GEMINI_API_KEY "
                         "(https://aistudio.google.com/apikey): "

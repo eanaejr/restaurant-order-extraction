@@ -1,20 +1,5 @@
 """FastAPI service: one endpoint, POST /order, that extracts a structured
-order from a guest utterance using a free Gemini model.
-
-The service is a stateless component of the phone assistant:
-
-    guest (phone) <-> AI assistant (STT/TTS, conversation, session state)
-                            |  POST /order {"text": "..."}
-                            v
-                     this service (extraction only)
-                            |
-                            v
-              {"items": [...], "unavailable": [...]}
-
-It never talks to the guest or the restaurant itself: the response goes back
-to the calling assistant. `unavailable` is the signal for that assistant to
-continue the conversation ("we don't have hamburgers, would you like...?").
-"""
+order from a guest utterance using a free Gemini model."""
 
 from __future__ import annotations
 
@@ -38,14 +23,12 @@ logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
-    """App factory: the lifespan re-reads configuration on every start,
-    which keeps tests (and redeploys) simple."""
+    """App factory: the lifespan re-reads configuration on every start."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # Fail fast on broken configuration or menu — at boot, not per request.
-        # A missing API key is deliberately NOT fatal: the service starts and
-        # POST /order returns a clear 500 instead.
+        # Fail fast at boot; a missing API key is deliberately not fatal
+        # (POST /order answers a clear 500 instead).
         app.state.settings = load_settings()
         app.state.menu = load_menu()
         app.state.system_prompt = gemini.load_system_prompt()
@@ -70,7 +53,7 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     def health() -> dict:
-        """Liveness + configuration snapshot (the key itself is never exposed)."""
+        """Liveness + configuration snapshot (never the key itself)."""
 
         settings: Settings = app.state.settings
         return {
@@ -95,8 +78,7 @@ def create_app() -> FastAPI:
         menu: Menu = app.state.menu
 
         try:
-            # Fault injection first (GEMINI_SIMULATE_FAILURE): the demo of
-            # failure modes must not need a real key — see README.
+            # Fault injection for demos (GEMINI_SIMULATE_FAILURE) — see README.
             if settings.simulate_failure:
                 raise gemini.simulate_failure(settings.simulate_failure)
 
@@ -116,7 +98,6 @@ def create_app() -> FastAPI:
                 system_prompt=app.state.system_prompt,
             )
         except gemini.GeminiError as exc:
-            # 500 key problem / 503 quota-limited (with Retry-After) / 502 transient
             retry_after = exc.retry_after_s
             raise HTTPException(
                 status_code=exc.status_code,
@@ -130,13 +111,8 @@ def create_app() -> FastAPI:
 
 
 def normalize_order(result: GeminiOrder, menu: Menu) -> OrderResponse:
-    """Post-processing that never trusts the model:
-
-    - an item whose id is not on the menu lands in `unavailable` (the request
-      is kept — never dropped, never silently replaced by something similar),
-    - duplicate ids and duplicate unavailable texts are merged,
-    - suggested ids that are not on the menu are dropped.
-    """
+    """Never trust the model: unknown ids land in `unavailable` (kept, never
+    dropped or replaced), duplicates merge, unknown suggested ids are dropped."""
 
     items: dict[str, int] = {}
     unavailable: dict[str, tuple[str, int]] = {}
@@ -145,8 +121,6 @@ def normalize_order(result: GeminiOrder, menu: Menu) -> OrderResponse:
         if item.id in menu:
             items[item.id] = items.get(item.id, 0) + item.quantity
         else:
-            # The model produced an id that is not on the menu. Keep the
-            # request in unavailable so the caller can tell the guest.
             text, quantity = unavailable.get(item.id.lower(), (item.id, 0))
             unavailable[item.id.lower()] = (text, quantity + item.quantity)
 
@@ -155,7 +129,6 @@ def normalize_order(result: GeminiOrder, menu: Menu) -> OrderResponse:
         text, quantity = unavailable.get(key, (entry.text.strip(), 0))
         unavailable[key] = (text, quantity + entry.quantity)
 
-    # Suggestions: only ids that really exist on the menu, without duplicates.
     suggestions = list(dict.fromkeys(s for s in result.suggestions if s in menu))
 
     return OrderResponse(

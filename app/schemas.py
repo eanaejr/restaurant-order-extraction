@@ -1,15 +1,11 @@
 """Pydantic models for the /order endpoint and for the Gemini response.
 
 The Gemini* models double as the structured-output schema (response_schema):
-the model is forced to answer in exactly that JSON shape. Per Google's
-best practice, field descriptions live here in the schema and the JSON
-format is NOT duplicated inside the prompt; the model learns the meaning of
-each field from these descriptions.
-
-Numeric constraints are deliberately NOT part of the Gemini-facing schema
-(Gemini supports only a subset of JSON Schema); they are enforced afterwards
-in Python — never trust the model.
-"""
+the model must answer in exactly that shape and learns the field meanings
+from the descriptions below — the JSON format is not duplicated in the
+prompt (Google's best practice). Numeric constraints are enforced in Python
+afterwards, not in the schema (Gemini supports only a subset of JSON
+Schema): never trust the model."""
 
 from __future__ import annotations
 

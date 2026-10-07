@@ -1,15 +1,11 @@
 """Sends the example sentences from the task against a running service.
 
 Usage:
-    uvicorn app.main:app --reload        # in one terminal (needs GEMINI_API_KEY)
-    python check_examples.py             # in another
+    uvicorn app.main:app --reload    # terminal 1 (needs GEMINI_API_KEY)
+    python check_examples.py         # terminal 2
 
-BASE_URL can be overridden via the environment or the first argument.
-All five sentences from the task ("Primjeri za provjeru") are asserted,
-including the two optional cases: the meat-free question (suggestions)
-and the guest changing their mind mid-sentence.
-Exit code 0 = all checks passed, 1 = at least one failed.
-"""
+Asserts all five task sentences (including both optional cases), blank
+text -> 422 and GET /health. Exit code 0 = all checks passed."""
 
 from __future__ import annotations
 

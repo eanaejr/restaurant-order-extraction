@@ -1,26 +1,14 @@
 """Presentation script: shows the whole story in front of the examiners.
 
 Usage (two terminals):
-    # 1) the normal service (reads .env / GEMINI_API_KEY)
-    uvicorn app.main:app --reload
+    uvicorn app.main:app --reload    # the normal service (reads .env)
+    python demo.py                   # the demo
 
-    # 2) the demo
-    python demo.py
-
-What it shows, in order:
- 1. The five sentences from the task, asserted (three mandatory + the two
-    optional cases: meat-free suggestions and the changed mind)
- 2. Protocol edge cases over HTTP (blank text -> 422, /health)
- 3. Informational cases (a question about an item, politeness, gibberish)
-    — printed so you can talk about them; model behaviour, so no hard
-    asserts
- 4. All three failure modes, deterministically — spins up temporary
-    services with GEMINI_SIMULATE_FAILURE and shows the exact answers
-    for a rejected key (500), exhausted free-tier quota (503 +
-    Retry-After) and a fully unreachable Gemini (502)
-
-Exit code 0 = every asserted check passed.
-"""
+Shows, in order: the five task sentences (asserted), protocol edge cases
+(blank text -> 422, /health), unusual input (informational, not asserted),
+and all three failure modes deterministically via GEMINI_SIMULATE_FAILURE:
+rejected key -> 500, exhausted quota -> 503 + Retry-After, unreachable
+Gemini -> 502. Exit code 0 = every asserted check passed."""
 
 from __future__ import annotations
 
@@ -220,8 +208,7 @@ def main() -> int:
               f"uvicorn app.main:app --reload ({exc})")
         return 1
 
-    # Patient timeout: with retries and fallback models, a single order can
-    # legitimately take a while when Google is having a slow morning.
+    # retries + fallback can legitimately take a while
     with httpx.Client(base_url=BASE_URL, timeout=240.0) as client:
         show_mandatory(client)
         show_protocol(client)

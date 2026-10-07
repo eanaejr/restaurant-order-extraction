@@ -1,13 +1,8 @@
 """Tests for the order extraction service.
 
-The Gemini boundary (app.gemini.extract_order) is mocked in the endpoint
-tests, so the suite runs without an API key and without network access.
-The Gemini-facing pieces (config building, strict validation, retry and
-model fallback) are tested directly with a fake client.
-
-Every test gets a deterministic environment via the autouse `isolated_env`
-fixture: no local .env file, no variables leaking in or out of a test.
-"""
+The Gemini boundary is mocked in the endpoint tests (no API key, no
+network); the Gemini-facing pieces are tested directly with a fake client.
+The autouse `isolated_env` fixture keeps every test deterministic."""
 
 from __future__ import annotations
 
@@ -118,14 +113,8 @@ def make_fake_client(scripts):
 
 @pytest.fixture(autouse=True)
 def isolated_env(monkeypatch):
-    """Deterministic environment for every test.
-
-    - the developer's local .env file is not loaded,
-    - no Gemini variable leaks in or out of a test.
-
-    Tests that explicitly exercise .env handling re-bind the real
-    load_dotenv and point ENV_FILE at a temporary file.
-    """
+    """No local .env, no GEMINI_* variables leaking in or out, no sleeps;
+    the .env tests re-bind the real load_dotenv themselves."""
 
     monkeypatch.setattr(config_module, "load_dotenv", lambda *args, **kwargs: None)
     monkeypatch.setattr(gemini, "RETRY_BACKOFF_S", 0)
@@ -137,11 +126,8 @@ def isolated_env(monkeypatch):
 
 @pytest.fixture()
 def client(monkeypatch):
-    """A TestClient with a dummy API key.
-
-    Entering the client context triggers the lifespan, which re-reads the
-    environment — hence setenv *before* entering.
-    """
+    """A TestClient with a dummy API key; setenv before entering — the
+    lifespan re-reads the environment."""
 
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     app = create_app()
@@ -214,8 +200,7 @@ def test_order_unavailable_passthrough(client, monkeypatch):
 
 
 def test_order_meat_free_question_returns_suggestions(client, monkeypatch):
-    """Optional task case: a question is not an order — matching menu ids
-    are suggested, nothing is ordered."""
+    """Optional case: a question is not an order — suggestions, no items."""
 
     monkeypatch.setattr(
         gemini,
@@ -242,8 +227,7 @@ def test_order_meat_free_question_returns_suggestions(client, monkeypatch):
 
 
 def test_order_change_of_mind_final_statement_wins(client, monkeypatch):
-    """Optional task case: 'tri margarite i colu, ma ne, ipak dvije
-    margarite' -> margarita x 2 (corrected) and the cola stands."""
+    """Optional case: the corrected part wins, the cola stands."""
 
     monkeypatch.setattr(
         gemini,
@@ -392,15 +376,14 @@ def test_validate_result_rejects_empty_suggestion():
 
 
 def test_build_config_sends_no_temperature_for_gemini_3(monkeypatch):
-    """On Gemini 3.x the backend ignores temperature/top_p/top_k — we do not
-    send them; determinism comes from thinking_level + response_schema."""
+    """Gemini 3.x ignores temperature — we never send it."""
 
     monkeypatch.setenv("GEMINI_MODEL", "gemini-3.8-flash")
     monkeypatch.setenv("GEMINI_THINKING_LEVEL", "low")
     monkeypatch.setenv("GEMINI_TEMPERATURE", "0.2")  # must NOT be sent for 3.x
     settings = load_settings()
 
-    assert settings.temperature is None  # dropped at load time for 3.x
+    assert settings.temperature is None
     config = gemini.build_config(settings, "system prompt")
     assert "temperature" not in config
     assert config["thinking_config"] == {"thinking_level": "low"}
@@ -437,9 +420,9 @@ def test_load_settings_rejects_bad_temperature(monkeypatch):
 
 
 @pytest.mark.parametrize("kind, expected_status", [
-    ("auth", 500),       # rejected key: our configuration problem
-    ("quota", 503),      # free-tier quota exhausted: try later
-    ("transient", 502),  # whole chain unreachable: upstream problem
+    ("auth", 500),
+    ("quota", 503),
+    ("transient", 502),
 ])
 def test_simulated_failure_answers_the_right_status(monkeypatch, kind, expected_status):
     """Full HTTP path, no mocks and no API key needed — deterministic demo."""
@@ -476,8 +459,7 @@ def test_simulated_failure_rejects_unknown_kind(monkeypatch):
 
 
 def test_default_fallback_chain_when_unset():
-    """Google's newest models occasionally answer 503 'high demand'; the
-    default is a small chain of other free-tier models."""
+    """Newest models occasionally answer 503 'high demand'."""
 
     settings = load_settings()
     assert settings.model == "gemini-3.8-flash"
@@ -555,7 +537,7 @@ def test_extract_order_retries_once_then_succeeds():
     )
     result = gemini.extract_order("dva piva", make_menu(), settings, client=client)
     assert [i.model_dump() for i in result.items] == [{"id": "pivo", "quantity": 2}]
-    assert client.model_calls == {"gemini-3.8-flash": 2}  # failed once, retried
+    assert client.model_calls == {"gemini-3.8-flash": 2}
 
 
 def test_extract_order_gives_up_after_two_attempts():
@@ -563,7 +545,7 @@ def test_extract_order_gives_up_after_two_attempts():
     client = make_fake_client({"gemini-3.8-flash": [RuntimeError("API down")]})
     with pytest.raises(gemini.GeminiError):
         gemini.extract_order("jednu colu", make_menu(), settings, client=client)
-    assert client.model_calls == {"gemini-3.8-flash": 2}  # try + exactly one retry
+    assert client.model_calls == {"gemini-3.8-flash": 2}
 
 
 def test_extract_order_rejects_nonpositive_quantity():
@@ -577,9 +559,6 @@ def test_extract_order_rejects_nonpositive_quantity():
 
 
 def test_extract_order_falls_back_to_next_model():
-    """A '503 high demand' primary is retried once, then the next free model
-    in the chain takes over."""
-
     settings = make_settings(fallback_models=("gemini-3.5-flash-lite",))
     client = make_fake_client(
         {
@@ -590,8 +569,8 @@ def test_extract_order_falls_back_to_next_model():
     result = gemini.extract_order("dva piva", make_menu(), settings, client=client)
     assert [i.model_dump() for i in result.items] == [{"id": "pivo", "quantity": 2}]
     assert client.model_calls == {
-        "gemini-3.8-flash": 2,        # try + one retry
-        "gemini-3.5-flash-lite": 1,   # fallback succeeds immediately
+        "gemini-3.8-flash": 2,
+        "gemini-3.5-flash-lite": 1,
     }
 
 
@@ -612,8 +591,6 @@ def test_extract_order_reports_whole_chain_in_error():
 
 
 def test_auth_error_stops_immediately():
-    """A rejected key (401/403) must not burn retries or fallback models."""
-
     settings = make_settings(fallback_models=("gemini-3.5-flash-lite",))
     client = make_fake_client(
         {
@@ -628,8 +605,6 @@ def test_auth_error_stops_immediately():
 
 
 def test_quota_exhausted_on_all_models():
-    """Every model answering 429 means the free-tier quota is gone: 503."""
-
     settings = make_settings(fallback_models=("gemini-3.5-flash-lite",))
     client = make_fake_client(
         {
@@ -645,8 +620,6 @@ def test_quota_exhausted_on_all_models():
 
 
 def test_quota_on_primary_then_fallback_succeeds():
-    """A 429 burst on the primary model is retried, then the chain continues."""
-
     settings = make_settings(fallback_models=("gemini-3.5-flash-lite",))
     client = make_fake_client(
         {
@@ -667,10 +640,8 @@ def test_extract_order_requires_api_key():
 
 
 def test_real_client_is_built_with_call_timeout(monkeypatch):
-    """A stalled call must become an error within CALL_TIMEOUT_MS (the SDK
-    has no default HTTP timeout) — then the retry/fallback chain takes over
-    instead of hanging for minutes. Observed live: Google occasionally
-    stalls a call instead of erroring quickly."""
+    """The SDK has no default HTTP timeout — a stalled call must become an
+    error (CALL_TIMEOUT_MS), not a minutes-long hang."""
 
     captured = {}
 
@@ -681,7 +652,7 @@ def test_real_client_is_built_with_call_timeout(monkeypatch):
 
     monkeypatch.setattr(gemini.genai, "Client", _RecordingClient)
     settings = make_settings(api_key="test-key")
-    with pytest.raises(gemini.GeminiError):  # the recording client cannot answer
+    with pytest.raises(gemini.GeminiError):
         gemini.extract_order("jednu colu", make_menu(), settings)
     assert captured["api_key"] == "test-key"
     assert captured["http_options"] == {"timeout": gemini.CALL_TIMEOUT_MS}
