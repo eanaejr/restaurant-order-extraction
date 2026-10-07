@@ -184,6 +184,16 @@ plus two protocol checks (blank text → `422`, `GET /health`). It prints
 `PASS`/`FAIL` per case and exits non-zero on any failure, so it can also
 serve as a smoke test after deployment.
 
+A larger evaluation set lives in `eval_set.json` (30 sentences covering
+word forms, word numbers, unavailable items, availability questions,
+mind changes, politeness and small talk). `run_eval.py` sends them to the
+running service, paced under the free-tier rate limits, and prints the
+pass rate:
+
+```bash
+python run_eval.py        # e.g. "Result: 30/30 passed (100.0%)"
+```
+
 For presentations, `demo.py` goes further — the same five sentences
 plus protocol edge cases, unusual input (a question about an item,
 politeness, gibberish) and **all three failure modes shown deterministically**
@@ -216,10 +226,11 @@ curl -s -X POST localhost:8000/order -H 'Content-Type: application/json' -d '{"t
 
 ## What could be improved
 
-The biggest gain would be a small evaluation set of recorded guest sentences
-with expected results, run regularly — a pass rate would turn "it seems to
-work" into a measured number and catch prompt regressions the way
-`check_examples.py` cannot. On the reliability side: exponential backoff and
-a circuit breaker for the Gemini API. The natural next extension from the
-task: suggesting alternatives for unavailable items through the same
-`suggestions` mechanism.
+Growing `eval_set.json` (recorded production sentences, Croatian dialects) and
+running it after every prompt change — the pass rate turns "it seems to work"
+into a measured number. In the menu data: a `vegetarijansko` attribute
+(vegetarian excludes fish as well; `bez_mesa` alone cannot carry that
+distinction in general — on this menu the two happen to coincide). On the
+reliability side: exponential backoff and a circuit breaker for the Gemini
+API. The natural next extension from the task: suggesting alternatives for
+unavailable items through the same `suggestions` mechanism.
