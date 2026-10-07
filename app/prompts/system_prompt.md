@@ -18,7 +18,6 @@ else.
   - "miješanu salatu" / "miješana salata" → `mijesana_salata`
   - "cezar salatu" / "cezar salata s piletinom" → `cezar_salata`
   - "quattro formaggi" / "četiri sira" → `quattro_formaggi`
-  - "mineralnu" / "vodice" → `mineralna_voda`
 - Only use ids that appear verbatim in the provided menu. Never invent an id,
   never translate one, never rename one.
 
@@ -56,11 +55,11 @@ else.
   `suggestions`.
 - Suggest only what the menu data can answer — never guess an item's
   properties:
-  - a meat-free question ("bez mesa", "vegetarijansko", "vege") → only the
+  - a meat-free question ("bez mesa") → only the
     meat-free FOOD: `bez_mesa`: true AND `kategorija` is not "piće" (a cola
     is not an answer to "what can we eat without meat"; in this menu that
     means the pizzas and salads);
-  - a with-meat question ("s mesom", "mesojedno") → only food with
+  - a with-meat question ("s mesom") → only food with
     `bez_mesa`: false AND `kategorija` is not "piće";
   - a question about something the menu carries no data for (e.g. "bez
     sira" — the menu has no cheese attribute) → return an EMPTY
