@@ -117,7 +117,7 @@ def run_protocol_checks(client: httpx.Client) -> bool:
 
 
 def main() -> int:
-    with httpx.Client(base_url=BASE_URL, timeout=90.0) as client:
+    with httpx.Client(base_url=BASE_URL, timeout=240.0) as client:
         try:
             health = client.get("/health").json()
         except httpx.HTTPError as exc:

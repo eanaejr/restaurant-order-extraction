@@ -666,6 +666,27 @@ def test_extract_order_requires_api_key():
     assert "GEMINI_API_KEY" in str(excinfo.value)
 
 
+def test_real_client_is_built_with_call_timeout(monkeypatch):
+    """A stalled call must become an error within CALL_TIMEOUT_MS (the SDK
+    has no default HTTP timeout) — then the retry/fallback chain takes over
+    instead of hanging for minutes. Observed live: Google occasionally
+    stalls a call instead of erroring quickly."""
+
+    captured = {}
+
+    class _RecordingClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.models = None  # every call fails -> GeminiError below
+
+    monkeypatch.setattr(gemini.genai, "Client", _RecordingClient)
+    settings = make_settings(api_key="test-key")
+    with pytest.raises(gemini.GeminiError):  # the recording client cannot answer
+        gemini.extract_order("jednu colu", make_menu(), settings)
+    assert captured["api_key"] == "test-key"
+    assert captured["http_options"] == {"timeout": gemini.CALL_TIMEOUT_MS}
+
+
 # ---------------------------------------------------------------------------
 # Menu loading
 # ---------------------------------------------------------------------------

@@ -144,6 +144,7 @@ without hurting quality; the schema already constrains the output shape.
 | Free-tier rate limit (`429`) | longer backoff between attempts, fallback chain still tried; if every model answers `429`: `503` with a `Retry-After` header |
 | API key invalid/blocked (`401`/`403`) | no pointless retries or fallbacks — the key is the problem, not the models: `500` with a clear "check GEMINI_API_KEY" message |
 | Model returns malformed or nonsensical JSON | strict validation rejects it (retry + fallback), else `502` with the whole chain named |
+| A call stalls instead of erroring (observed live) | cut off after 60 s — an explicit per-call HTTP timeout (the SDK has none by default), then handled like any transient failure: retry, next model |
 | Blank/whitespace text, missing field | `422` |
 | Utterance is a question about what is available (e.g. "bez mesa?") | empty order + matching menu ids in `suggestions` |
 | Utterance is small talk, not an order at all | empty `items`, `unavailable` and `suggestions` — nothing is invented |

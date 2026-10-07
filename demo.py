@@ -220,7 +220,9 @@ def main() -> int:
               f"uvicorn app.main:app --reload ({exc})")
         return 1
 
-    with httpx.Client(base_url=BASE_URL, timeout=60.0) as client:
+    # Patient timeout: with retries and fallback models, a single order can
+    # legitimately take a while when Google is having a slow morning.
+    with httpx.Client(base_url=BASE_URL, timeout=240.0) as client:
         show_mandatory(client)
         show_protocol(client)
         show_informational(client)

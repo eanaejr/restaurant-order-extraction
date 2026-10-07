@@ -42,6 +42,12 @@ MAX_ATTEMPTS = 2  # one retry per model
 RETRY_BACKOFF_S = 0.5  # pause between attempts on the same model
 QUOTA_BACKOFF_S = 2.0  # longer pause while being rate-limited (429)
 QUOTA_RETRY_AFTER_S = 60  # advertised to the caller via the Retry-After header
+# Per-call HTTP timeout, in milliseconds (the SDK's HttpOptions.timeout is
+# in ms and has no default). Google occasionally *stalls* a call instead of
+# erroring quickly (observed live) — without this the endpoint could hang
+# for minutes. A timed-out call becomes an ordinary transient error, so
+# the retry/fallback chain takes over.
+CALL_TIMEOUT_MS = 60_000
 
 # HTTP codes from the Gemini API that retrying or switching models cannot fix.
 AUTH_CODES = {401, 403}
@@ -210,7 +216,12 @@ def extract_order(order_text: str, menu: Menu, settings: Settings,
                 "GEMINI_API_KEY is not set. Get a free key at "
                 "https://aistudio.google.com/apikey and export it."
             )
-        client = genai.Client(api_key=settings.api_key)
+        # Explicit per-call timeout (in ms, see CALL_TIMEOUT_MS): a stalled
+        # call must become an error, never a minutes-long hang.
+        client = genai.Client(
+            api_key=settings.api_key,
+            http_options={"timeout": CALL_TIMEOUT_MS},
+        )
 
     models = [settings.model, *settings.fallback_models]
     last_error: Exception | None = None
